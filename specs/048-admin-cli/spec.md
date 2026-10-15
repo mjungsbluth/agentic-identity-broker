@@ -93,11 +93,11 @@ An operator issues, inspects, rotates, and revokes the broker's own client crede
 
 **Why this priority**: Only needed in local and hybrid OAuth2 server modes.
 
-**Independent Test**: Run `client-credentials create`, `get`, `rotate`, and `delete` for one agent.
+**Independent Test**: Run `agent client-credentials create`, `get`, `rotate`, and `delete` for one agent.
 
 **Acceptance Scenarios**:
 
-1. **US5-S1** **Given** an agent without credentials, **When** the operator runs `get` and `rotate`, **Then** both exit 4; after `create` the secret is printed once, `get` shows metadata without the secret, `rotate` returns a new secret with `previous_invalidated_at`, and after `delete --yes` `get` exits 4 again.
+1. **US5-S1** **Given** an agent without credentials, **When** the operator runs `agent client-credentials get` and `rotate --yes`, **Then** both exit 4; after `create` the secret is printed once and a second `create` exits 5, `get` shows metadata without the secret, `rotate` without `--yes` on a non-interactive stdin exits 2 and with `--yes` returns a new secret with `previous_invalidated_at`, and after `delete --yes` `get` exits 4 again.
 
 ---
 
@@ -139,6 +139,20 @@ An operator automates administration with `-o json`, documented exit codes, and 
 **Independent Test**: Covered by the `-o json` assertions and exit-code assertions (2, 4, 5, 6) in the scenarios above.
 
 **Acceptance Scenarios**: see US1-S3, US2-S2, US2-S5, US2-S6, US3-S3, US4-S2, US5-S1.
+
+---
+
+### User Story 9 - Sweep third-party sessions (Priority: P3)
+
+An operator previews and runs a refresh of every stored third-party session whose access token expires soon.
+
+**Why this priority**: The Admin API exposes the sweep for scheduled jobs; without a command operators fall back to `curl`.
+
+**Independent Test**: Run `session sweep --dry-run`, a real `session sweep`, and a sweep with an invalid lookahead against a local admin server.
+
+**Acceptance Scenarios**:
+
+1. **US9-S1** **Given** an admin server, **When** the operator runs `aibctl session sweep --dry-run --lookahead PT10M --page-size 100 -o json`, **Then** the counts are printed with `dry_run: true`; a sweep without `--dry-run` reports `dry_run: false`; and `--lookahead 10m` is rejected by the server with exit code 6 and nothing on stdout.
 
 ### Usage Examples
 
@@ -217,11 +231,11 @@ $ aibctl agent create --display-name "Research Agent" --description "Summarises 
     --service-requirement github=repo:mandatory
 Agent "research-agent" created.
 $ aibctl agent list
-ID              DISPLAY_NAME    CLIENT_ID  PERMISSION_SETS        SERVICES          UPDATED
-research-agent  Research Agent  -          github-read:mandatory  github:mandatory  2026-10-09T12:05:00Z
+ID              DISPLAY_NAME    CLIENT_ID  PERMISSION_SETS  SERVICES  UPDATED
+research-agent  Research Agent  -          1                1         2026-10-09T12:05:00Z
 $ aibctl agent list --show-uuid -o wide
-ID              DISPLAY_NAME    CLIENT_ID  PERMISSION_SETS        SERVICES          UPDATED               UUID                                  EXTERNAL_ID  REDIRECT_URIS  CLIENT_URIS
-research-agent  Research Agent  -          github-read:mandatory  github:mandatory  2026-10-09T12:05:00Z  7a1d0c2e-5b3f-4e8a-9c6d-0f1e2d3c4b5a  -            -              -
+ID              DISPLAY_NAME    CLIENT_ID  PERMISSION_SETS  SERVICES  UPDATED               UUID                                  EXTERNAL_ID  REDIRECT_URIS  CLIENT_URIS
+research-agent  Research Agent  -          1                1         2026-10-09T12:05:00Z  7a1d0c2e-5b3f-4e8a-9c6d-0f1e2d3c4b5a  -            0              0
 ```
 
 Edit a resource by round-tripping its document, or change single fields with flags:
@@ -258,7 +272,7 @@ $ echo $?
 Issue broker credentials and rotate keys:
 
 ```console
-$ aibctl client-credentials create research-agent
+$ aibctl agent client-credentials create research-agent
 Client credentials for "research-agent" created.
 The client secret is shown once and cannot be retrieved later.
 Client ID:             7a1d0c2e-5b3f-4e8a-9c6d-0f1e2d3c4b5a
@@ -298,7 +312,7 @@ Agent "research-agent" deleted.
 
 ### Functional Requirements
 
-- **FR-001**: The CLI MUST expose every operation of `api/admin/openapi.yaml`: agents, services, protected resources, permission sets, client credentials, signing keys, CIMD client keys, and health.
+- **FR-001**: The CLI MUST expose every operation of `api/admin/openapi.yaml`: agents, services, protected resources, permission sets, client credentials, signing keys, CIMD client keys, session sweep, and health.
 - **FR-002**: Configuration MUST be read from `os.UserConfigDir()/aibctl/config.yaml` (Linux `~/.config/aibctl`, macOS `~/Library/Application Support/aibctl`, Windows `%AppData%\aibctl`), overridable with `--config` or `AIBCTL_CONFIG`.
 - **FR-003**: Settings MUST resolve with the precedence flags > `AIBCTL_*` environment > selected context > `defaults` > built-in defaults, and a missing file MUST NOT be an error.
 - **FR-004**: A context MUST support a static Bearer token, a token command (argv list, no shell, bounded by a timeout, trimmed stdout), a principal header value with a configurable header name, extra request headers, and a `Host` override; at least one credential MUST be configured.

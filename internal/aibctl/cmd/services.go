@@ -2,6 +2,7 @@ package aibctlcmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -142,6 +143,16 @@ func applyServiceFlags(f *pflag.FlagSet, w *client.ServiceWrite) error {
 	return nil
 }
 
+// omitGeneratedClientID drops the client_id copied from the current service when the
+// replacement uses private_key_jwt: the broker generates that ID and rejects any
+// client_id in such a request. A client_id the operator changed is kept so the
+// server reports it.
+func omitGeneratedClientID(w *client.ServiceWrite, current *client.Service) {
+	if output.Deref(w.TokenEndpointAuthMethod) == "private_key_jwt" && w.ClientID == current.ClientID {
+		w.ClientID = ""
+	}
+}
+
 // checkServiceSecret refuses to send the redacted placeholder and, for a static
 // confidential service, requires a new secret because PUT replaces it.
 func checkServiceSecret(w *client.ServiceWrite, current *client.Service) error {
@@ -240,13 +251,13 @@ func (c *cli) newServiceListCommand() *cobra.Command {
 				for _, s := range services {
 					row := []string{
 						output.DisplayID(s.CanonicalID, s.ID), s.DisplayName, s.OAuth2Flavor, authMethodLabel(s.TokenEndpointAuthMethod),
-						orDash(s.IssuerURI), cell(s.ProtectedResources), s.UpdatedAt,
+						orDash(s.IssuerURI), strconv.Itoa(len(s.ProtectedResources)), s.UpdatedAt,
 					}
 					if rt.Printer.IDColumns() {
 						row = append(row, s.ID)
 					}
 					if rt.Printer.Wide() {
-						row = append(row, orDash(s.ClientID), discoveryLabel(s.Discovery), cell(scopeValues(s.Scopes)))
+						row = append(row, orDash(s.ClientID), discoveryLabel(s.Discovery), strconv.Itoa(len(s.Scopes)))
 					}
 					t.Rows = append(t.Rows, row)
 				}
@@ -300,7 +311,7 @@ func (c *cli) newServiceCreateCommand() *cobra.Command {
 			}
 			var body client.ServiceWrite
 			if hasFile {
-				if _, err := c.readDocument(cmd, &body); err != nil {
+				if err := c.readDocument(cmd, &body); err != nil {
 					return err
 				}
 			} else if err := applyServiceFlags(cmd.Flags(), &body); err != nil {
@@ -356,7 +367,7 @@ on --if-match, so a concurrent change fails with exit code 5.`,
 			}
 			var body client.ServiceWrite
 			if hasFile {
-				if _, err := c.readDocument(cmd, &body); err != nil {
+				if err := c.readDocument(cmd, &body); err != nil {
 					return err
 				}
 			} else {
@@ -365,6 +376,7 @@ on --if-match, so a concurrent change fails with exit code 5.`,
 					return &UsageError{Err: err, Cmd: cmd}
 				}
 			}
+			omitGeneratedClientID(&body, current)
 			if err := checkServiceSecret(&body, current); err != nil {
 				return &UsageError{Err: err, Cmd: cmd}
 			}

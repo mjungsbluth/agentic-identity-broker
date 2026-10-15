@@ -33,6 +33,16 @@ func newFakeServices(t *testing.T) *fakeServices {
 			"created_at": "c", "updated_at": "u",
 		}
 	}
+	cimd := func() map[string]any {
+		return map[string]any{
+			"id": "55555555-5555-5555-5555-555555555555", "canonical_id": "cimd", "display_name": "CIMD",
+			"client_id":                  "https://broker.example.com/.well-known/oauth-client/55555555-5555-5555-5555-555555555555",
+			"token_endpoint_auth_method": "private_key_jwt", "oauth2_flavor": "standard", "issuer_uri": "https://idp.example.com",
+			"discovery": map[string]any{"enable_discovery": true},
+			"endpoints": map[string]any{"token_endpoint": "https://idp.example.com/token", "authorize_endpoint": "https://idp.example.com/authorize"},
+			"scopes":    []any{}, "created_at": "c", "updated_at": "u",
+		}
+	}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := recordedRequest{method: r.Method, path: r.URL.RequestURI(), prefer: r.Header.Get("Prefer"), contentType: r.Header.Get("Content-Type"), ifMatch: r.Header.Get("If-Match")}
 		_ = json.NewDecoder(r.Body).Decode(&rec.body)
@@ -53,6 +63,16 @@ func newFakeServices(t *testing.T) *fakeServices {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(service())
+		case r.Method == http.MethodGet && r.URL.Path == "/api/services/cimd":
+			w.Header().Set("ETag", f.etag)
+			_ = json.NewEncoder(w).Encode(cimd())
+		case r.Method == http.MethodPut && r.URL.Path == "/api/services/cimd":
+			if rec.ifMatch != f.etag {
+				w.WriteHeader(412)
+				_, _ = w.Write([]byte(`{"error":"precondition failed","message":"service changed"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(cimd())
 		case r.Method == http.MethodPost && r.URL.Path == "/api/services":
 			w.WriteHeader(201)
 			_ = json.NewEncoder(w).Encode(service())
@@ -96,7 +116,12 @@ func TestServiceListAndGet(t *testing.T) {
 	require.Equal(t, 0, r.code, r.stderr)
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
 	assert.Equal(t, []string{"ID", "DISPLAY_NAME", "FLAVOR", "AUTH_METHOD", "ISSUER", "PROTECTED_RESOURCES", "UPDATED"}, strings.Fields(lines[0]))
-	assert.Equal(t, []string{"github", "GitHub", "github", "client_secret", "https://github.com", "https://api.github.com/", "u"}, strings.Fields(lines[1]))
+	assert.Equal(t, []string{"github", "GitHub", "github", "client_secret", "https://github.com", "1", "u"}, strings.Fields(lines[1]))
+
+	r = run(t, "", f.args(t, "service", "list", "-o", "wide")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	lines = strings.Split(strings.TrimSpace(r.stdout), "\n")
+	assert.Equal(t, "1", strings.Fields(lines[1])[len(strings.Fields(lines[1]))-1], "wide scopes are counts")
 
 	r = run(t, "", f.args(t, "svc", "get", "github")...)
 	require.Equal(t, 0, r.code, r.stderr)
@@ -163,6 +188,31 @@ func TestServiceUpdateUsesETag(t *testing.T) {
 	req = f.last()
 	assert.Equal(t, `"3"`, req.ifMatch)
 	assert.NotContains(t, req.body, "protected_resources", "omitted set is preserved server-side")
+}
+
+func TestServiceUpdateOmitsGeneratedCIMDClientID(t *testing.T) {
+	f := newFakeServices(t)
+	r := run(t, "", f.args(t, "service", "update", "cimd", "--display-name", "Renamed")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	req := f.last()
+	assert.Equal(t, http.MethodPut, req.method)
+	assert.Equal(t, f.etag, req.ifMatch)
+	assert.NotContains(t, req.body, "client_id")
+	assert.Equal(t, "private_key_jwt", req.body["token_endpoint_auth_method"])
+
+	r = run(t, "", f.args(t, "service", "get", "cimd", "-o", "yaml")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	r = run(t, r.stdout, f.args(t, "service", "update", "cimd", "-f", "-")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	assert.NotContains(t, f.last().body, "client_id")
+
+	r = run(t, "", f.args(t, "service", "update", "github", "--auth-method", "private_key_jwt")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	assert.NotContains(t, f.last().body, "client_id")
+
+	r = run(t, "", f.args(t, "service", "update", "github", "--auth-method", "private_key_jwt", "--client-id", "explicit")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	assert.Equal(t, "explicit", f.last().body["client_id"])
 }
 
 func TestProtectedResourceCommands(t *testing.T) {

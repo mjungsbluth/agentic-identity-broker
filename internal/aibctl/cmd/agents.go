@@ -2,6 +2,7 @@ package aibctlcmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -14,7 +15,7 @@ import (
 var agentFieldFlags = []string{
 	"display-name", "description", flagCanonicalID, flagClearCanonicalID, "client-id", "clear-client-id",
 	"external-id", "governance-url", "user-documentation-url", "agent-interface-url",
-	"permission-set", "service-requirement", "redirect-uri", "allowed-scope", "client-uri",
+	"permission-set", "service-requirement", "service-requirement-all", "redirect-uri", "allowed-scope", "client-uri",
 }
 
 func (c *cli) newAgentCommand() *cobra.Command {
@@ -29,6 +30,7 @@ func (c *cli) newAgentCommand() *cobra.Command {
 		c.newAgentCreateCommand(),
 		c.newAgentUpdateCommand(),
 		c.newAgentDeleteCommand(),
+		c.newClientCredentialsCommand(),
 	)
 	return cmd
 }
@@ -44,7 +46,8 @@ func addAgentFieldFlags(cmd *cobra.Command, update bool) {
 	f.String("user-documentation-url", "", "end-user documentation URL")
 	f.String("agent-interface-url", "", "agent interface URL")
 	f.StringArray("permission-set", nil, "permission set ID[:mandatory|optional] (repeatable; default optional)")
-	f.StringArray("service-requirement", nil, "service ID=scope1,scope2[:mandatory|optional] (repeatable)")
+	f.StringArray("service-requirement", nil, "service ID=scope1,scope2[:mandatory|optional] (repeatable; default optional; only a trailing :mandatory or :optional sets the type)")
+	f.StringArray("service-requirement-all", nil, "service ID[:mandatory|optional] whose requirement receives every scope the agent's permission sets grant for it (repeatable; default optional)")
 	f.StringArray("redirect-uri", nil, "allowed redirect URI (repeatable)")
 	f.StringArray("allowed-scope", nil, "allowed scope (repeatable)")
 	f.StringArray("client-uri", nil, "CIMD client URI (repeatable)")
@@ -57,6 +60,7 @@ func addAgentFieldFlags(cmd *cobra.Command, update bool) {
 func (c *cli) registerAgentFlagCompletions(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc("permission-set", c.completeResource(listPermissionSetItems))
 	_ = cmd.RegisterFlagCompletionFunc("service-requirement", c.completeResource(listServiceItems))
+	_ = cmd.RegisterFlagCompletionFunc("service-requirement-all", c.completeResource(listServiceItems))
 }
 
 // applyAgentFlags overlays changed field flags on w.
@@ -106,7 +110,7 @@ func applyAgentFlags(f *pflag.FlagSet, w *client.AgentWrite) error {
 			w.PermissionSets = append(w.PermissionSets, client.PermissionSetRef{PermissionSetID: id, RequirementType: typ})
 		}
 	}
-	if f.Changed("service-requirement") {
+	if f.Changed("service-requirement") || f.Changed("service-requirement-all") {
 		w.ServiceRequirements = nil
 		for _, v := range stringSliceFlag(f, "service-requirement") {
 			id, scopes, typ, err := parseScopedRef(v, "optional")
@@ -114,6 +118,13 @@ func applyAgentFlags(f *pflag.FlagSet, w *client.AgentWrite) error {
 				return fmt.Errorf("--service-requirement %w", err)
 			}
 			w.ServiceRequirements = append(w.ServiceRequirements, client.ServiceRequirement{ServiceID: id, RequirementType: typ, RequiredScopes: scopes})
+		}
+		for _, v := range stringSliceFlag(f, "service-requirement-all") {
+			id, typ, err := parseRef(v, "optional")
+			if err != nil {
+				return fmt.Errorf("--service-requirement-all %w", err)
+			}
+			w.ServiceRequirements = append(w.ServiceRequirements, client.ServiceRequirement{ServiceID: id, RequirementType: typ, RequiredScopes: []string{}, RequireAllScopes: true})
 		}
 	}
 	if f.Changed("redirect-uri") {
@@ -163,13 +174,13 @@ func (c *cli) newAgentListCommand() *cobra.Command {
 				for _, a := range agents {
 					row := []string{
 						output.DisplayID(a.CanonicalID, a.ID), a.DisplayName, orDash(output.Deref(a.ClientID)),
-						cell(permissionSetRefs(a.PermissionSets)), cell(serviceRequirementRefs(a.ServiceRequirements)), a.UpdatedAt,
+						strconv.Itoa(len(a.PermissionSets)), strconv.Itoa(len(a.ServiceRequirements)), a.UpdatedAt,
 					}
 					if rt.Printer.IDColumns() {
 						row = append(row, a.ID)
 					}
 					if rt.Printer.Wide() {
-						row = append(row, orDash(output.Deref(a.ExternalID)), cell(a.RedirectURIs), cell(a.ClientURIs))
+						row = append(row, orDash(output.Deref(a.ExternalID)), strconv.Itoa(len(a.RedirectURIs)), strconv.Itoa(len(a.ClientURIs)))
 					}
 					t.Rows = append(t.Rows, row)
 				}
@@ -196,18 +207,14 @@ func permissionSetRefs(refs []client.PermissionSetRef) []string {
 	return out
 }
 
-func serviceRequirementRefs(reqs []client.ServiceRequirement) []string {
-	out := make([]string, 0, len(reqs))
-	for _, r := range reqs {
-		out = append(out, r.ServiceID+":"+r.RequirementType)
-	}
-	return out
-}
-
 func agentDetails(a *client.Agent) [][2]string {
 	var requirements []string
 	for _, r := range a.ServiceRequirements {
-		requirements = append(requirements, fmt.Sprintf("%s (%s: %s)", r.ServiceID, r.RequirementType, strings.Join(r.RequiredScopes, " ")))
+		scopes := strings.Join(r.RequiredScopes, " ")
+		if r.RequireAllScopes {
+			scopes = "all scopes"
+		}
+		requirements = append(requirements, fmt.Sprintf("%s (%s: %s)", r.ServiceID, r.RequirementType, scopes))
 	}
 	return [][2]string{
 		{"ID", output.DisplayID(a.CanonicalID, a.ID)},
@@ -267,7 +274,7 @@ func (c *cli) newAgentCreateCommand() *cobra.Command {
 			}
 			var body client.AgentWrite
 			if hasFile {
-				if _, err := c.readDocument(cmd, &body); err != nil {
+				if err := c.readDocument(cmd, &body); err != nil {
 					return err
 				}
 				stripServiceNames(&body)
@@ -301,7 +308,7 @@ func (c *cli) newAgentUpdateCommand() *cobra.Command {
 		Long: `Update an agent. With --file the document is the complete new representation
 (use "aibctl agent get ID -o yaml" as a starting point). With field flags the
 current agent is fetched and only the given fields change; list flags such as
---permission-set replace the whole list.`,
+--permission-set and --service-requirement-all replace their whole lists.`,
 		Args:              exactArgs(1, "ID"),
 		ValidArgsFunction: c.completeResource(listAgentItems),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -317,7 +324,7 @@ current agent is fetched and only the given fields change; list flags such as
 			defer cancel()
 			var body client.AgentWrite
 			if hasFile {
-				if _, err := c.readDocument(cmd, &body); err != nil {
+				if err := c.readDocument(cmd, &body); err != nil {
 					return err
 				}
 				stripServiceNames(&body)

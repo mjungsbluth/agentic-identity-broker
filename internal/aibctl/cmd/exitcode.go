@@ -29,6 +29,13 @@ type UsageError struct {
 func (e *UsageError) Error() string { return e.Err.Error() }
 func (e *UsageError) Unwrap() error { return e.Err }
 
+// PreconditionError reports a state the command refuses to change, such as
+// creating credentials that already exist.
+type PreconditionError struct{ Err error }
+
+func (e *PreconditionError) Error() string { return e.Err.Error() }
+func (e *PreconditionError) Unwrap() error { return e.Err }
+
 // ExitCode maps an error to the documented process exit codes.
 func ExitCode(err error) int {
 	if err == nil {
@@ -37,6 +44,10 @@ func ExitCode(err error) int {
 	var usageErr *UsageError
 	if errors.As(err, &usageErr) {
 		return ExitUsage
+	}
+	var preconditionErr *PreconditionError
+	if errors.As(err, &preconditionErr) {
+		return ExitConflict
 	}
 	var authErr *auth.Error
 	if errors.As(err, &authErr) {

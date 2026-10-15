@@ -35,6 +35,23 @@ type Loaded struct {
 	Overlay Overlay
 }
 
+// SelectedContext is the context named by --context or AIBCTL_CONTEXT, else current_context.
+func (l *Loaded) SelectedContext() string {
+	if l.Overlay.Context != nil {
+		return *l.Overlay.Context
+	}
+	return l.File.CurrentContext
+}
+
+// LocalOutput chooses the format for commands that only read the configuration
+// file. A context's output applies only to commands that contact its server.
+func (l *Loaded) LocalOutput() string {
+	if l.Overlay.Output != nil {
+		return *l.Overlay.Output
+	}
+	return firstNonEmpty(l.File.Defaults.Output, DefaultOutput)
+}
+
 const (
 	keyConfig          = "config"
 	keyContext         = "context"
@@ -80,17 +97,9 @@ func Load(cmd *cobra.Command) (*Loaded, error) {
 
 // LoadFromViper is Load with a caller-provided Viper instance for tests.
 func LoadFromViper(v *viper.Viper, cmd *cobra.Command) (*Loaded, error) {
-	v.SetEnvPrefix(EnvPrefix)
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
-	for _, key := range overlayKeys {
-		if err := v.BindEnv(key); err != nil {
-			return nil, err
-		}
+	if err := bindOverlay(v, cmd); err != nil {
+		return nil, err
 	}
-	if cmd != nil {
-		bindFlags(v, cmd)
-	}
-
 	path := v.GetString(keyConfig)
 	if path == "" {
 		defaultPath, err := DefaultPath()
@@ -127,6 +136,30 @@ func ReadFile(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// LoadOverlay reads only the AIBCTL_* environment and the flags on cmd; it
+// never reads the configuration file.
+func LoadOverlay(cmd *cobra.Command) (Overlay, error) {
+	v := viper.New()
+	if err := bindOverlay(v, cmd); err != nil {
+		return Overlay{}, err
+	}
+	return overlayFromViper(v), nil
+}
+
+func bindOverlay(v *viper.Viper, cmd *cobra.Command) error {
+	v.SetEnvPrefix(EnvPrefix)
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+	for _, key := range overlayKeys {
+		if err := v.BindEnv(key); err != nil {
+			return err
+		}
+	}
+	if cmd != nil {
+		bindFlags(v, cmd)
+	}
+	return nil
 }
 
 func bindFlags(v *viper.Viper, cmd *cobra.Command) {
@@ -194,10 +227,7 @@ func Resolve(loaded *Loaded) (*Resolved, error) {
 	file := loaded.File
 	o := loaded.Overlay
 
-	name := file.CurrentContext
-	if o.Context != nil {
-		name = *o.Context
-	}
+	name := loaded.SelectedContext()
 
 	var ctx Context
 	switch {

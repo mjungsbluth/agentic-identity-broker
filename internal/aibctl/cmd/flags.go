@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 const (
@@ -61,12 +62,5 @@ func (c *cli) confirm(cmd *cobra.Command, action string) error {
 
 func isTerminal(r any) bool {
 	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return ok && term.IsTerminal(int(f.Fd())) // #nosec G115 -- file descriptors fit in int.
 }

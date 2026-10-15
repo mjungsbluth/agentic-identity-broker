@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/auth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/client"
@@ -38,11 +39,15 @@ type Runtime struct {
 
 // Context derives a request context bounded by the configured timeout.
 func (rt *Runtime) Context(cmd *cobra.Command) (context.Context, context.CancelFunc) {
+	return requestContext(cmd, rt.Config.Timeout)
+}
+
+func requestContext(cmd *cobra.Command, timeout time.Duration) (context.Context, context.CancelFunc) {
 	parent := cmd.Context()
 	if parent == nil {
 		parent = context.Background()
 	}
-	return context.WithTimeout(parent, rt.Config.Timeout)
+	return context.WithTimeout(parent, timeout)
 }
 
 type cli struct {
@@ -68,9 +73,9 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "aibctl",
 		Short: "Administer the Agentic Identity Broker",
-		Long: `aibctl manages agents, services, permission sets, and keys through the
-broker's Admin API. Connection and credentials come from named contexts in the
-per-user configuration file (see "aibctl config path").`,
+		Long: `aibctl manages agents, services, permission sets, keys, and session sweeps
+through the broker's Admin API. Connection and credentials come from named
+contexts in the per-user configuration file (see "aibctl config path").`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		CompletionOptions: cobra.CompletionOptions{
@@ -96,9 +101,9 @@ per-user configuration file (see "aibctl config path").`,
 		c.newAgentCommand(),
 		c.newServiceCommand(),
 		c.newPermissionSetCommand(),
-		c.newClientCredentialsCommand(),
 		c.newSigningKeyCommand(),
 		c.newCIMDClientKeyCommand(),
+		c.newSessionCommand(),
 	)
 	return root
 }
