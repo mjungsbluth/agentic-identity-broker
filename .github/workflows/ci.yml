@@ -105,7 +105,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -121,7 +121,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: just
       - name: Install development tools
@@ -150,7 +150,7 @@ jobs:
           done
       - name: Upload unit test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-test-results
           path: test-results/
@@ -218,7 +218,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -234,7 +234,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: just
       - name: Install development tools
@@ -243,7 +243,7 @@ jobs:
         run: just verify-integration-junit
       - name: Upload integration test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-test-results
           path: test-results/
@@ -266,7 +266,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -282,7 +282,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: just
       - name: Install development tools
@@ -295,7 +295,7 @@ jobs:
         run: just verify-e2e-backend-junit
       - name: Upload backend E2E test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-backend-test-results
           path: test-results/
@@ -328,7 +328,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: just
       - name: Install development tools
@@ -342,7 +342,7 @@ jobs:
         run: just verify-e2e-extproc-junit
       - name: Upload ExtProc E2E test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-extproc-test-results
           path: test-results/
@@ -365,7 +365,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -381,7 +381,7 @@ jobs:
           key: tools-${{ runner.os }}-${{ hashFiles('justfile') }}
           restore-keys: tools-${{ runner.os }}-
       - name: Install just
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: just
       - name: Install development tools
@@ -392,7 +392,7 @@ jobs:
         run: just verify-e2e-frontend-junit
       - name: Upload frontend E2E test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-frontend-test-results
           path: test-results/
@@ -416,7 +416,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm

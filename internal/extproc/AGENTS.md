@@ -82,7 +82,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 
 **Loading pipeline** (in `loader.go`):
 
-1. Viper uses the `EXTPROC_` prefix. It replaces dots in keys with underscores.
+1. Viper uses `internal/configutil` for `::` structural paths and the `EXTPROC_` prefix. Environment lookup replaces `::` and literal dots with underscores.
 2. The service can load an optional YAML file through `EXTPROC_CONFIG_PATH`.
 3. Explicit Cobra flags use `RegisterFlags()` and `bindFlags()`. They have the highest precedence.
 4. `expandEnvVars()` expands `${VAR}` in supported string fields and exporter header values.
@@ -98,7 +98,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `OPAInput` map alias | OPA document from the opa-envoy-plugin-compatible base, with top-level `type`, `mcp`, and `context` keys |
 | `mcp` input object | Map of decoded MCP fields and agentgateway target-server metadata; omit fields irrelevant to the request type |
 | `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and token-bound `granted_permission_sets` when present |
-| `OPADecision` struct | Policy output: `Action string` (`"allow"` or `"deny"`), `Reasons []string` |
+| `OPADecision` struct | Policy output: `Action string` (`"allow"`, `"deny"`, or `"approval_required"`), `Reasons []string`, optional `ApprovalContext` |
 | `ParseDecision(any)` | Type-safe extraction of `action` and `reasons` from the OPA result map |
 | `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once; `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |
 | `ParseMCPMessage(value)` | Validates one decoded JSON-RPC 2.0 message → `*MCPMessage` |
@@ -243,6 +243,7 @@ See accepted `adrs/036-extproc-metadata-token-exchange-input.md`. It changes the
 - **Mocking**: Use hand-written mock/stub implementations for `Exchanger` and `Authorizer`.
   Use `httptest.NewServer` for token-exchange endpoints.
 - **Configuration helpers**: Call `extprocconfig.LoadFromViper(v)` with a configured `*viper.Viper`.
+  Create the instance with `configutil.NewViper()` before you populate it. Use `configutil.Key()` for structural addresses.
   This prevents environment pollution.
 - **No Ginkgo here**: Use standard `t.Run` or table-driven subtests.
   Use Ginkgo/Gomega only in `tests/e2e/extproc/`.

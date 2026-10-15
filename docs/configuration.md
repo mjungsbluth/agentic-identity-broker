@@ -17,6 +17,7 @@ This guide explains how to configure the Agentic Identity Broker for different d
 - [Command-Line Flags](#command-line-flags)
 - [Configuration Reference](#configuration-reference)
 - [Available Settings](#available-settings)
+- [Token Refresh](#token-refresh)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
 - [aibctl configuration](#aibctl-configuration)
@@ -36,7 +37,7 @@ The Identity Broker supports multiple configuration sources with clear precedenc
 
 ## Configuration Sources
 
-The Identity Broker loads configuration from four sources (in order of precedence):
+The Identity Broker loads configuration from four types of sources:
 
 ### 1. Built-in Defaults
 
@@ -98,11 +99,10 @@ agentic-identity-broker --log-level debug --log-format json
 
 ## Precedence Rules
 
-When the same configuration key is provided by multiple sources, the value from the highest-precedence source wins:
+When the same configuration key appears in multiple sources, the highest-precedence value wins:
 
 ```
-CLI Flags > YAML > .env Files > Defaults
-   (3)       (2)      (1)        (0)
+CLI Flags > Environment Variables (including .env files) > YAML File > Defaults
 ```
 
 **Example**:
@@ -246,6 +246,15 @@ This section lists all configuration options. See [Available Settings](#availabl
 | `log.format` | enum | `text` | `text`, `json` | No | `IDENTITY_BROKER_LOG_FORMAT` | `--log-format` | Sets log output format. Use `json` for production and log aggregation systems. |
 
 Each successful confidential-provider secret decryption emits `service_secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
+
+#### Token Refresh Configuration
+
+| Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
+|--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
+| `token_refresh.lookahead_duration` | Go duration string | `5m` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION` | `--token_refresh.lookahead_duration` | Window before access-token expiry for background refresh. Set it shorter than the provider's access-token lifetime. |
+| `token_refresh.background_workers` | integer | `10` | 1–20 | No | `IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS` | `--token_refresh.background_workers` | Maximum concurrent background refreshes per replica. Each holds a database connection. The 20-worker cap leaves at least five of the 25 pooled connections for other work. |
+| `token_refresh.sweep.default_page_size` | integer | `100` | 1–1000 | No | `IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE` | `--token_refresh.sweep.default_page_size` | Number of candidates per admin sweep page when the request omits `page_size`. |
+
 
 #### Encryption Configuration
 
@@ -412,6 +421,27 @@ Pre-authentication mode allows the Identity Broker to trust authenticated princi
 - Empty/missing headers result in 401 Unauthorized on protected routes
 - Optional authentication routes allow missing principals
 
+**JWT pre-authentication (both servers):** Configure `server.enduser.authentication.jwt` and
+`server.admin.authentication.jwt` independently. For Helm, set the corresponding
+`broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
+values with the same snake_case keys. When `jwt` is configured, the plain principal header
+is not a fallback. The broker accepts the configured JWT header only from a trusted proxy
+or mesh; it must remove client-supplied copies and restrict direct access to both ports.
+
+| Option under `server.<enduser or admin>.authentication.jwt` | Default | Description |
+|---|---|---|
+| `header_name` | `Authorization` | JWT header; only `Authorization` strips a `Bearer ` prefix. A gateway-supplied `X-Userinfo` contains the raw JWT. |
+| `verification` | `jwks` | `jwks` verifies a signature; `none` trusts a gateway-supplied JWT without signature verification. |
+| `jwks_uri` | none | Required with `jwks`, forbidden with `none`. Must use HTTPS except when the development-only HTTPS skip is enabled. |
+| `expected_audience`, `expected_issuer` | unset | Reject JWTs with other audience/issuer when set. |
+| `claim_extraction.principal_expression` | `claims.sub` | CEL expression returning a non-empty principal; for gateway userinfo containing `principal`, use `claims.principal`. |
+| `claim_extraction.display_name_expression`, `email_expression`, `picture_url_expression` | unset | Optional CEL expressions for profile attributes. |
+
+The admin gateway must authorize callers and set the configured JWT header after discarding
+client copies. A bearer token used to authenticate at the gateway is not the broker's
+operator principal. With an absent or invalid JWT, admin CIMD key mutations do not create
+a key and report `server_misconfiguration` because the operator principal is missing.
+
 **Example YAML configurations:**
 
 Development (custom header):
@@ -519,7 +549,7 @@ request_context:
 
 - All configuration options have built-in defaults and are optional unless marked "Required"
 - Environment variables follow the pattern: `IDENTITY_BROKER_{SECTION}_{KEY}` (uppercased)
-- CLI flags follow the pattern: `--{section}-{key}` (lowercase with hyphens)
+- CLI flag names vary by setting. Use the exact flag shown in the reference table.
 - See [Precedence Rules](#precedence-rules) for how values from different sources are resolved
 - For YAML configuration syntax, see [YAML Configuration](#yaml-configuration)
 
@@ -559,10 +589,11 @@ The following configuration sections are planned for future releases. This table
 
 The configuration system follows consistent naming patterns across all sources:
 
-1. **YAML Paths**: Use dot notation with lowercase keys (e.g., `log.level`, `server.tls.enabled`)
+1. **YAML Paths**: Use nested mappings with lowercase structural keys. This guide uses dotted paths, such as `log.level`, as shorthand.
 2. **Environment Variables**: Prefix + uppercase + underscores (e.g., `IDENTITY_BROKER_LOG_LEVEL`, `IDENTITY_BROKER_SERVER_TLS_ENABLED`)
-3. **CLI Flags**: Lowercase with hyphens (e.g., `--log-level`, `--server-tls-enabled`)
-4. **Nested Config**: Each level adds a separator (`.` in YAML, `_` in env vars, `-` in flags)
+3. **CLI Flags**: Use the exact name shown in the reference table (for example, `--log-level` or `--token_refresh.background_workers`).
+4. **Nested Configuration**: YAML nesting defines the structure. Flat keys such as `telemetry.exporter.endpoint` are literal keys, not structural paths.
+5. **Token Refresh**: Use nested YAML mappings for `token_refresh`. Its CLI flags use `.`, and its environment variables use `_`.
 
 ### Configuration by Use Case
 
@@ -648,6 +679,26 @@ log:
 ```
 
 **Recommendation**: Use `json` format in production for structured logging and log aggregation.
+
+### Token Refresh
+
+Set these optional values for proactive refresh of third-party OAuth2 access tokens:
+
+```yaml
+token_refresh:
+  lookahead_duration: 5m
+  background_workers: 10
+  sweep:
+    default_page_size: 100
+```
+
+The source order is CLI flags > environment variables > YAML file > defaults. The three flags use the exact names in the [reference table](#token-refresh-configuration).
+
+Set `lookahead_duration` to less than the shortest access-token lifetime that your providers issue. Otherwise, every token exchange can submit a refresh while the token remains valid.
+
+Keep `background_workers` between 1 and 20 per replica. A locked refresh holds one database connection during the provider call. The broker's pool has 25 connections. If all slots are busy, the broker drops new background refresh submissions for other sessions and still returns the valid token.
+
+The admin sweep is not scheduled by the broker. Schedule `POST /api/sessions/sweep` externally through the authenticated admin proxy. See the [session sweep runbook](operations/session-sweep.md) for the request and scheduling instructions.
 
 ### Encryption Backend Configuration
 
@@ -1202,6 +1253,24 @@ oauth2_authorization_server:
 
 See [OAuth2 server modes](/docs/concepts/oauth2-server-modes) for how the broker issues or proxies tokens.
 
+#### Continuing consent for local refresh
+
+Local refresh requires an active grant for the token's principal and agent. This also applies to locally issued tokens in hybrid mode.
+Grant deletion, expiration, or replacement ends refresh authority. Renewal of expired consent revokes previous sessions. Credential deletion revokes all agent sessions. Agent deletion removes them.
+Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
+Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
+
+If deletion commits but refresh cleanup fails, the audit event uses `action=grant_deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
+
+Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
+
+**Accepted limits:**
+
+- A row without `grant_id` gets one rotation on the strength of an older active grant. Its successor stores the grant ID.
+- Old pods do not check consent or lock the agent first. Revocation can still deadlock while old binaries serve traffic during deployment.
+- Existing access tokens remain valid until `token_ttl` expires.
+
+
 ### OAuth2 User Impersonation Configuration
 
 #### oauth2_authorization_server.impersonation
@@ -1417,7 +1486,7 @@ For HTTP/HTTPS, configure the collector URL without a signal path. AIB sends tra
 
 ### Environment Variable Mapping
 
-All OTel settings can be overridden via environment variables using the `IDENTITY_BROKER_TELEMETRY_` prefix, following the same Viper binding rules as other settings. For example:
+Scalar OTel settings with environment bindings accept the `IDENTITY_BROKER_TELEMETRY_` prefix. Resource attributes and exporter headers use YAML maps, not whole-map environment strings. For example:
 
 ```bash
 IDENTITY_BROKER_TELEMETRY_ENABLED=true
@@ -1425,6 +1494,32 @@ IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT=otel-collector:4317
 IDENTITY_BROKER_TELEMETRY_EXPORTER_INSECURE=true
 IDENTITY_BROKER_TELEMETRY_SERVICE_NAME=my-broker-instance
 ```
+
+### Literal Map Keys
+
+Both the broker and ExtProc preserve literal dots in resource attribute names and exporter header names:
+
+```yaml
+telemetry:
+  resource_attributes:
+    service: broker
+    service.namespace: production
+    service.version: release
+  exporter:
+    headers:
+      x.vendor.token: ${OTLP_TOKEN}
+      x.vendor.region: eu
+```
+
+`service` and `service.namespace` remain separate string keys. Nested maps where string values are expected cause a decoding error. Missing maps and explicit `{}` maps decode to nil, which consumers treat as empty.
+
+The broker expands `${VAR}` in both maps. ExtProc expands exporter header values but leaves resource attribute values unchanged.
+
+The shared `internal/configutil` utility reserves `::` for structural Viper paths. It does not own service defaults or loading policy. For caller-created ExtProc instances, call `configutil.NewViper()` before populating the instance for `LoadFromViper`. Address a literal leaf with `configutil.Key("telemetry", "resource_attributes", "service.namespace")`.
+
+Nested YAML and public CLI names remain unchanged. For example, ExtProc keeps `--telemetry.exporter.endpoint` and `EXTPROC_TELEMETRY_EXPORTER_ENDPOINT`. The broker keeps `IDENTITY_BROKER_TELEMETRY_EXPORTER_ENDPOINT`. Source metadata continues to show readable dotted paths.
+
+ExtProc replaces both `::` and literal dots with underscores for environment lookup. Known YAML leaf keys retain their existing environment overrides. This conversion is not unambiguous for arbitrary map keys. Keys containing `::` are outside this contract. Viper remains case-insensitive and does not preserve attribute-name case.
 
 ### What is Instrumented
 
