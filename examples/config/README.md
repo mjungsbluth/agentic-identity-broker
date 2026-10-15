@@ -135,6 +135,7 @@ Third-party OAuth2 session management configuration. Demonstrates:
 - Security-focused comments explaining each setting
 - Environment variable substitution for sensitive keys
 - A stable public HTTPS `server.enduser.public_url` for CIMD confidential services
+- Proactive token refresh with a 5m lookahead, 10 background workers, and 100 sessions per sweep page
 
 
 This configuration is required when enabling OAuth2 session management with third-party
@@ -162,12 +163,13 @@ JWT Pre-Authentication configuration. Demonstrates:
 - Unsigned JWT support for service mesh environments (`verification: none`)
 - CEL expressions for principal and profile attribute extraction (display name, email, picture URL)
 - Fail-closed behavior when `authentication.jwt` is configured (no plain-header fallback)
+- Independent admin JWT pre-auth with a gateway-supplied `X-Userinfo` operator principal
 - Mutual exclusivity enforcement (`verification: none` + `jwks_uri` → startup error)
 
 **Usage:**
 ```bash
-# Include jwt section in your main configuration file under server.enduser.authentication
-# See jwt-preauth.yaml for complete examples of signed, unsigned, and plain-header-only configurations
+# Include a jwt section under server.enduser.authentication and/or server.admin.authentication
+# See jwt-preauth.yaml for signed, unsigned, admin, and plain-header examples
 server:
   enduser:
     authentication:

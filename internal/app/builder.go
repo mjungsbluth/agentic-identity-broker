@@ -86,8 +86,9 @@ type App struct {
 	CIMDAssertionSigner  ports.CIMDClientAssertionSigner
 	CIMDMetadataProvider ports.CIMDClientMetadataProvider
 
-	// JWT pre-authentication (optional, nil when not configured)
-	JWTAuthenticator             domjwtauth.JWTAuthenticator
+	// JWT pre-authentication is independent for each server (nil when not configured).
+	EnduserJWTAuthenticator      domjwtauth.JWTAuthenticator
+	AdminJWTAuthenticator        domjwtauth.JWTAuthenticator
 	ApprovalRequestAuthenticator *httpmiddleware.ApprovalRequestAuthenticator
 
 	// Handler groups for routing
@@ -478,6 +479,7 @@ func (b *Builder) Build() (*App, error) {
 			app.ProviderService,
 			b.storage.UserGrants(),
 			b.storage.UserSessions(),
+			b.storage.RefreshTokenSessions(),
 			app.PermissionSetService,
 			b.logger,
 		)
@@ -589,7 +591,7 @@ func (b *Builder) Build() (*App, error) {
 
 	// Build service configuration from application config
 	// Constitution Principle VII: Configuration-Driven Design
-	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.Server.EndUser.PublicURL)
+	cfg := oauth2session.NewConfigFromPorts(b.config.ThirdPartyOAuth2, b.config.TokenRefresh, b.config.Server.EndUser.PublicURL)
 	readTimeout := b.config.Storage.Timeouts.Read
 	if readTimeout <= 0 {
 		readTimeout = 5 * time.Second
@@ -735,29 +737,33 @@ func (b *Builder) Build() (*App, error) {
 		clientAssertionJWKS = adapter
 	}
 
-	// Create JWT pre-authentication adapter if configured
-	// Per Constitution Principle VII: Configuration-Driven Design — only create when JWT block present
-	if b.config.Server.EndUser.Authentication.JWT != nil {
-		jwtCfg := b.config.Server.EndUser.Authentication.JWT
-
-		// Validate JWT config mutual exclusivity (defense-in-depth, also checked by config validator)
+	for _, server := range [...]struct {
+		name          string
+		config        *ports.JWTConfig
+		authenticator *domjwtauth.JWTAuthenticator
+	}{
+		{"enduser", b.config.Server.EndUser.Authentication.JWT, &app.EnduserJWTAuthenticator},
+		{"admin", b.config.Server.Admin.Authentication.JWT, &app.AdminJWTAuthenticator},
+	} {
+		jwtCfg := server.config
+		if jwtCfg == nil {
+			continue
+		}
 		if jwtCfg.Verification == "none" && jwtCfg.JWKSURI != "" {
-			return nil, fmt.Errorf("authentication.jwt: verification 'none' and jwks_uri are mutually exclusive")
+			err := fmt.Errorf("server.%s.authentication.jwt: verification 'none' and jwks_uri are mutually exclusive", server.name)
+			return nil, errors.Join(err, app.Shutdown(context.Background()))
 		}
 
-		// Create CEL evaluator for JWT claim extraction (domain layer)
-		celConfig := domjwtauth.CELEvaluatorConfig{
+		celEval, err := domjwtauth.NewCELEvaluator(domjwtauth.CELEvaluatorConfig{
 			PrincipalExpression:   jwtCfg.ClaimExtraction.PrincipalExpression,
 			DisplayNameExpression: jwtCfg.ClaimExtraction.DisplayNameExpression,
 			EmailExpression:       jwtCfg.ClaimExtraction.EmailExpression,
 			PictureURLExpression:  jwtCfg.ClaimExtraction.PictureURLExpression,
-		}
-		celEval, err := domjwtauth.NewCELEvaluator(celConfig, b.logger)
+		}, b.logger)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create CEL evaluator for JWT pre-auth: %w", err)
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create CEL evaluator: %w", server.name, err), app.Shutdown(context.Background()))
 		}
 
-		// Create JWT authenticator adapter (uses lestrrat-go/jwx v4)
 		jwtAuthenticator, err := jwtauthadapter.NewJWXAuthenticator(jwtauthadapter.JWXAuthenticatorConfig{
 			JWTConfig:    jwtCfg,
 			CELEvaluator: celEval,
@@ -765,10 +771,10 @@ func (b *Builder) Build() (*App, error) {
 			Logger:       b.logger,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create JWT authenticator: %w", err)
+			return nil, errors.Join(fmt.Errorf("server.%s.authentication.jwt: failed to create JWT authenticator: %w", server.name, err), app.Shutdown(context.Background()))
 		}
 
-		app.JWTAuthenticator = jwtAuthenticator
+		*server.authenticator = jwtAuthenticator
 		prevShutdown := app.Shutdown
 		app.Shutdown = func(ctx context.Context) error {
 			var prevErr error
@@ -778,6 +784,7 @@ func (b *Builder) Build() (*App, error) {
 			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
 		}
 		b.logger.Info("JWT pre-authentication enabled",
+			"server", server.name,
 			"header_name", jwtCfg.HeaderName,
 			"verification", jwtCfg.Verification,
 			"has_audience", jwtCfg.ExpectedAudience != "",
@@ -829,6 +836,8 @@ func (b *Builder) Build() (*App, error) {
 		PermissionSets:     admin.NewPermissionSetsHandler(app.PermissionSetService, app.ProviderService, b.logger),
 		CIMDClientKeys:     admin.NewCIMDClientKeysHandler(app.CIMDKeyService, b.logger),
 	}
+	app.AdminHandlers.SessionSweep = admin.NewSessionSweepHandler(
+		oauth2session.NewSessionSweepService(b.storage.SessionExpiry(), app.OAuth2SessionService, b.logger), b.logger)
 
 	agentDetailHandler := consent.NewAgentDetailHandler(app.ConsentService, b.logger, app.SessionTokenService)
 
@@ -874,6 +883,7 @@ func (b *Builder) Build() (*App, error) {
 			tokenTTL,
 			ov.localRefreshTokenTTL,
 			claimsExpr,
+			app.ConsentService,
 			b.logger,
 			b.storage,
 		)
@@ -910,7 +920,7 @@ func (b *Builder) Build() (*App, error) {
 	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
 		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
-		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), clientAuthService, b.logger)
+		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), b.storage.RefreshTokenSessions(), clientAuthService, b.logger)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
 		return signingKeyService
@@ -1170,6 +1180,16 @@ func (b *Builder) Build() (*App, error) {
 		CIMDMetadata:         enduserHandlers.NewCIMDMetadataHandler(app.CIMDMetadataProvider, b.logger),
 		JWKS:                 jwksHandler,
 		SPA:                  handlers.NewSPAHandler(b.staticWebResourcesPath, b.logger),
+	}
+
+	// Drain admitted refreshes while telemetry and the upstream transport are still live.
+	prevSessionShutdown := app.Shutdown
+	app.Shutdown = func(ctx context.Context) error {
+		refreshErr := app.OAuth2SessionService.Close(ctx)
+		if prevSessionShutdown != nil {
+			return errors.Join(refreshErr, prevSessionShutdown(ctx))
+		}
+		return refreshErr
 	}
 
 	// Start maintenance only after all fallible construction has completed.

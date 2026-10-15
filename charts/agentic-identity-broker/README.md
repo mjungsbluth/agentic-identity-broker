@@ -37,6 +37,17 @@ the broker's default `http://localhost:14000`. Admin `/api` requests must match
 this URL's Host authority; ingress and other reverse proxies must preserve it.
 Forwarded Host headers are not trusted. `/health` probes remain unrestricted.
 
+The admin port must only be reachable through an authenticated proxy. Restrict access at deployment level and route sweep CronJobs through that proxy.
+
+`broker.server.enduser.authentication.jwt` and `broker.server.admin.authentication.jwt`
+are optional, independent JWT pre-authentication blocks (default: unset). Each supports
+`header_name`, `verification` (`jwks` or `none`), `jwks_uri`, audience/issuer constraints,
+and CEL `claim_extraction` keys in broker snake_case. The chart passes both blocks to
+their respective servers. If admin uses `verification: none` with `X-Userinfo`, the
+gateway must authenticate and authorize the caller, strip client-supplied `X-Userinfo`,
+set its own header with an operator `principal` claim, and prevent direct access to
+port 14000. An `Authorization` bearer token alone does not supply the operator principal.
+
 ### Install with External PostgreSQL
 
 For production deployments with an existing PostgreSQL database:
@@ -133,6 +144,8 @@ and unknown environments reject that development-only bypass.
 | `serviceAccount.irsa.role` | IAM role ARN for IRSA | `""` |
 | `ingress.enduser.enabled` | Enable Ingress for end-user API | `false` |
 | `ingress.admin.enabled` | Enable Ingress for admin API | `false` |
+| `broker.server.enduser.authentication.jwt` | End-user JWT pre-auth configuration, independent of admin | unset |
+| `broker.server.admin.authentication.jwt` | Admin JWT pre-auth configuration, independent of end-user | unset |
 | `resources.requests.cpu` | CPU request | `100m` |
 | `resources.requests.memory` | Memory request | `128Mi` |
 | `commonLabels` | Labels applied to all chart resources | `{}` |
@@ -163,6 +176,9 @@ and unknown environments reject that development-only bypass.
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMinRefresh` | Minimum client-assertion JWKS refresh interval (Go duration); empty defaults to `15m`. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMaxRefresh` | Maximum client-assertion JWKS refresh interval (Go duration); empty defaults to `max(jwksMinRefresh, 1h)`. | `""` |
+| `broker.tokenRefresh.lookaheadDuration` | String (Go duration): refresh before expiry; set below each provider access-token lifetime. | `"5m"` |
+| `broker.tokenRefresh.backgroundWorkers` | Integer (1–20): concurrent refreshes per replica. The 20-worker cap reserves 5 of 25 pooled database connections. | `10` |
+| `broker.tokenRefresh.sweep.defaultPageSize` | Integer (1–1000): default sessions per page for the externally triggered admin sweep. | `100` |
 | `broker.telemetry.serviceName` | Service name reported in every telemetry signal | `agentic-identity-broker` |
 | `broker.telemetry.resourceAttributes` | Additional OTel resource attributes (map) | `{}` |
 | `broker.telemetry.traces.enabled` | Enable trace export via OTLP | `true` |
