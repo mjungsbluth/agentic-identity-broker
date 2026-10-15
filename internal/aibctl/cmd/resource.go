@@ -1,6 +1,7 @@
 package aibctlcmd
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -15,16 +16,13 @@ const (
 	flagClearCanonicalID = "clear-canonical-id"
 )
 
-// readDocument decodes the -f document when given; ok reports whether -f was passed.
-func (c *cli) readDocument(cmd *cobra.Command, out any) (bool, error) {
+// readDocument decodes the --file document into out.
+func (c *cli) readDocument(cmd *cobra.Command, out any) error {
 	path, _ := cmd.Flags().GetString(flagFile)
-	if path == "" {
-		return false, nil
-	}
 	if err := input.Decode(path, c.deps.Stdin, out); err != nil {
-		return true, &UsageError{Err: err, Cmd: cmd}
+		return &UsageError{Err: err, Cmd: cmd}
 	}
-	return true, nil
+	return nil
 }
 
 // requireFileOrFlags rejects mixing -f with field flags and requires one of them
@@ -32,6 +30,9 @@ func (c *cli) readDocument(cmd *cobra.Command, out any) (bool, error) {
 func requireFileOrFlags(cmd *cobra.Command, fieldFlags []string, create bool) (bool, error) {
 	f := cmd.Flags()
 	hasFile := f.Changed(flagFile)
+	if path, _ := f.GetString(flagFile); hasFile && path == "" {
+		return false, &UsageError{Err: errors.New(`--file needs a path, or "-" for stdin`), Cmd: cmd}
+	}
 	var changed []string
 	for _, name := range fieldFlags {
 		if f.Changed(name) {
@@ -62,20 +63,21 @@ func parseRef(value, defaultType string) (string, string, error) {
 	return id, typ, nil
 }
 
-// parseScopedRef splits "ID=scope1,scope2[:requirement_type]".
+// parseScopedRef splits "ID=scope1,scope2[:mandatory|optional]". Only a trailing
+// ":mandatory" or ":optional" is the requirement type, so scopes such as
+// "read:org" keep their colons.
 func parseScopedRef(value, defaultType string) (id string, scopes []string, typ string, err error) {
 	id, rest, found := strings.Cut(value, "=")
 	if !found || strings.TrimSpace(id) == "" {
 		return "", nil, "", fmt.Errorf("%q: expected ID=scope1,scope2[:mandatory|optional]", value)
 	}
-	scopePart, typ, hasType := strings.Cut(rest, ":")
-	if !hasType {
-		typ = defaultType
+	typ = defaultType
+	if i := strings.LastIndexByte(rest, ':'); i >= 0 {
+		if suffix := rest[i+1:]; suffix == "mandatory" || suffix == "optional" {
+			rest, typ = rest[:i], suffix
+		}
 	}
-	if typ != "mandatory" && typ != "optional" {
-		return "", nil, "", fmt.Errorf("%q: requirement type must be mandatory or optional", value)
-	}
-	for _, s := range strings.Split(scopePart, ",") {
+	for _, s := range strings.Split(rest, ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			scopes = append(scopes, s)
 		}

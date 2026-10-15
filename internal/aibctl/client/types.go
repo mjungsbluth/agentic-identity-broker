@@ -264,3 +264,17 @@ type Key struct {
 	CreatedAt   string  `json:"created_at"`
 	RemovedAt   *string `json:"removed_at,omitempty"`
 }
+
+type SessionSweepRequest struct {
+	LookaheadDuration *string `json:"lookahead_duration,omitempty"`
+	DryRun            *bool   `json:"dry_run,omitempty"`
+	PageSize          *int    `json:"page_size,omitempty"`
+}
+
+type SessionSweepResult struct {
+	Refreshed      int  `json:"refreshed"`
+	Skipped        int  `json:"skipped"`
+	Failed         int  `json:"failed"`
+	TotalEvaluated int  `json:"total_evaluated"`
+	DryRun         bool `json:"dry_run"`
+}

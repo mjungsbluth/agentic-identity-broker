@@ -2,6 +2,7 @@ package aibctlcmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -34,7 +35,7 @@ func (c *cli) addPermissionSetFieldFlags(cmd *cobra.Command, update bool) {
 	f.String("name", "", "unique name")
 	f.String("description", "", "description")
 	f.String(flagCanonicalID, "", "canonical ID ([A-Za-z0-9._-]{1,128})")
-	f.StringArray("service-scope", nil, "service ID=scope1,scope2[:mandatory|optional] (repeatable; default optional)")
+	f.StringArray("service-scope", nil, "service ID=scope1,scope2[:mandatory|optional] (repeatable; default optional; only a trailing :mandatory or :optional sets the type)")
 	_ = cmd.RegisterFlagCompletionFunc("service-scope", c.completeResource(listServiceItems))
 	if update {
 		f.Bool(flagClearCanonicalID, false, "remove the canonical ID")
@@ -81,6 +82,14 @@ func serviceScopeRefs(scopes []client.ServiceScope) []string {
 	return out
 }
 
+func scopeCount(scopes []client.ServiceScope) int {
+	count := 0
+	for _, s := range scopes {
+		count += len(s.Scopes)
+	}
+	return count
+}
+
 func permissionSetDetails(p *client.PermissionSet) [][2]string {
 	return [][2]string{
 		{"ID", output.DisplayID(p.CanonicalID, p.ID)},
@@ -116,7 +125,7 @@ func (c *cli) newPermissionSetListCommand() *cobra.Command {
 			}
 			rt.Printer.NoHeaders = noHeaders(cmd)
 			return rt.Printer.PrintList(sets, func() output.Table {
-				t := output.Table{Header: []string{"ID", "NAME", "SERVICE_SCOPES", "UPDATED"}}
+				t := output.Table{Header: []string{"ID", "NAME", "SERVICES", "SCOPES", "UPDATED"}}
 				if rt.Printer.IDColumns() {
 					t.Header = append(t.Header, "UUID")
 				}
@@ -124,7 +133,7 @@ func (c *cli) newPermissionSetListCommand() *cobra.Command {
 					t.Header = append(t.Header, "DESCRIPTION")
 				}
 				for _, p := range sets {
-					row := []string{output.DisplayID(p.CanonicalID, p.ID), p.Name, cell(serviceScopeRefs(p.ServiceScopes)), p.UpdatedAt}
+					row := []string{output.DisplayID(p.CanonicalID, p.ID), p.Name, strconv.Itoa(len(p.ServiceScopes)), strconv.Itoa(scopeCount(p.ServiceScopes)), p.UpdatedAt}
 					if rt.Printer.IDColumns() {
 						row = append(row, p.ID)
 					}
@@ -181,7 +190,7 @@ func (c *cli) newPermissionSetCreateCommand() *cobra.Command {
 			}
 			var body client.PermissionSetWrite
 			if hasFile {
-				if _, err := c.readDocument(cmd, &body); err != nil {
+				if err := c.readDocument(cmd, &body); err != nil {
 					return err
 				}
 			} else if err := applyPermissionSetFlags(cmd.Flags(), &body); err != nil {
@@ -228,7 +237,7 @@ the given fields change; --service-scope replaces the whole list.`,
 			defer cancel()
 			var body client.PermissionSetWrite
 			if hasFile {
-				if _, err := c.readDocument(cmd, &body); err != nil {
+				if err := c.readDocument(cmd, &body); err != nil {
 					return err
 				}
 			} else {

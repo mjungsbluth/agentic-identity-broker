@@ -89,7 +89,7 @@ func (f *fakeKeys) last() recordedRequest {
 }
 
 func TestKeyCommands(t *testing.T) {
-	for _, family := range []struct{ noun, path string }{{"signing-key", "/api/oauth2-server/signing-keys"}, {"cimd-client-key", "/api/cimd-client-keys"}} {
+	for _, family := range []struct{ noun, path, title string }{{"signing-key", "/api/oauth2-server/signing-keys", "Signing key"}, {"cimd-client-key", "/api/cimd-client-keys", "CIMD client key"}} {
 		t.Run(family.noun, func(t *testing.T) {
 			f := newFakeKeys(t)
 			r := run(t, "", f.args(t, family.noun, "list")...)
@@ -105,7 +105,7 @@ func TestKeyCommands(t *testing.T) {
 			assert.Equal(t, http.MethodPost, req.method)
 			assert.Equal(t, "application/json", req.contentType, "body-less POST still declares JSON")
 			assert.Nil(t, req.body)
-			assert.Contains(t, r.stderr, `"k3" created`)
+			assert.Contains(t, r.stderr, family.title+` "k3" created.`)
 
 			r = run(t, "", f.args(t, family.noun, "create", "--algorithm", "ES256")...)
 			require.Equal(t, 0, r.code, r.stderr)
@@ -133,33 +133,43 @@ func TestKeyCommands(t *testing.T) {
 
 func TestClientCredentialsCommands(t *testing.T) {
 	f := newFakeKeys(t)
-	r := run(t, "", f.args(t, "client-credentials", "get", "research-agent")...)
-	assert.Equal(t, aibctlcmd.ExitNotFound, r.code)
+	r := run(t, "", f.args(t, "agent", "client-credentials", "get", "research-agent")...)
+	require.Equal(t, aibctlcmd.ExitNotFound, r.code, r.stderr)
 
-	r = run(t, "", f.args(t, "creds", "rotate", "research-agent")...)
-	assert.Equal(t, aibctlcmd.ExitNotFound, r.code)
+	r = run(t, "", f.args(t, "agent", "creds", "rotate", "research-agent", "--yes")...)
+	require.Equal(t, aibctlcmd.ExitNotFound, r.code, r.stderr)
 	assert.Contains(t, r.stderr, "no client credentials yet")
 
-	r = run(t, "", f.args(t, "client-credentials", "create", "research-agent")...)
+	r = run(t, "", f.args(t, "agent", "client-credentials", "create", "research-agent")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	assert.Contains(t, r.stderr, "created")
 	assert.Contains(t, r.stderr, "shown once")
 	assert.Contains(t, r.stdout, "Client Secret:         s1")
 	assert.Equal(t, "application/json", f.last().contentType)
 
-	r = run(t, "", f.args(t, "client-credentials", "get", "research-agent", "-o", "json")...)
+	r = run(t, "", f.args(t, "agent", "client-credentials", "create", "research-agent")...)
+	assert.Equal(t, aibctlcmd.ExitConflict, r.code)
+	assert.Contains(t, r.stderr, "already has client credentials")
+	assert.Equal(t, http.MethodGet, f.last().method, "create must not rotate")
+
+	r = run(t, "", f.args(t, "agent", "client-credentials", "get", "research-agent", "-o", "json")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	assert.Contains(t, r.stdout, `"rotated_at": "r"`)
 	assert.NotContains(t, r.stdout, "client_secret")
 
-	r = run(t, "", f.args(t, "client-credentials", "rotate", "research-agent", "-o", "json")...)
+	r = run(t, "", f.args(t, "agent", "client-credentials", "rotate", "research-agent", "-o", "json")...)
+	assert.Equal(t, aibctlcmd.ExitUsage, r.code)
+	assert.Contains(t, r.stderr, "requires confirmation")
+	assert.Equal(t, http.MethodGet, f.last().method, "unconfirmed rotation must not POST")
+
+	r = run(t, "", f.args(t, "agent", "client-credentials", "rotate", "research-agent", "--yes", "-o", "json")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	assert.Contains(t, r.stderr, "rotated")
 	assert.Contains(t, r.stdout, `"previous_invalidated_at": "p"`)
 
-	r = run(t, "", f.args(t, "client-credentials", "delete", "research-agent")...)
+	r = run(t, "", f.args(t, "agent", "client-credentials", "delete", "research-agent")...)
 	assert.Equal(t, aibctlcmd.ExitUsage, r.code)
-	r = run(t, "", f.args(t, "client-credentials", "revoke", "research-agent", "--yes")...)
+	r = run(t, "", f.args(t, "agent", "client-credentials", "revoke", "research-agent", "--yes")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	assert.Equal(t, http.MethodDelete, f.last().method)
 }

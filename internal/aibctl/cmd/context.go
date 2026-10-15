@@ -55,20 +55,21 @@ func (c *cli) newContextListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			format, _ := cmd.Flags().GetString("output")
-			if format == "" {
-				format = loaded.File.Defaults.Output
-			}
-			if format == "" {
-				format = config.DefaultOutput
+			format := loaded.LocalOutput()
+			if err := config.CheckOutputFormat(format); err != nil {
+				return &UsageError{Err: err, Cmd: cmd}
 			}
 			p := &output.Printer{Out: c.deps.Stdout, Format: output.Format(format), NoHeaders: noHeaders(cmd)}
 			cfg := config.Redacted(loaded.File)
-			return p.PrintList(cfg.Contexts, func() output.Table {
+			doc, err := config.Document(cfg.Contexts)
+			if err != nil {
+				return err
+			}
+			return p.PrintList(doc, func() output.Table {
 				t := output.Table{Header: []string{"CURRENT", "NAME", "SERVER", "AUTH", "OUTPUT"}}
 				for _, ctx := range cfg.Contexts {
 					current := ""
-					if ctx.Name == cfg.CurrentContext {
+					if ctx.Name == loaded.SelectedContext() {
 						current = "*"
 					}
 					t.Rows = append(t.Rows, []string{current, ctx.Name, ctx.Server, authSummary(ctx.Auth), ctx.Output})
@@ -91,10 +92,7 @@ func (c *cli) newContextCurrentCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name := loaded.File.CurrentContext
-			if loaded.Overlay.Context != nil {
-				name = *loaded.Overlay.Context
-			}
+			name := loaded.SelectedContext()
 			if name == "" {
 				return &UsageError{Err: fmt.Errorf("no current context set (config: %s)", loaded.Path), Cmd: cmd}
 			}

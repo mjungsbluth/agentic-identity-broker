@@ -18,23 +18,30 @@ var _ = Describe("US5 Client credentials", func() {
 
 	// US5-S1 from specs/048-admin-cli/spec.md
 	It("creates, inspects, rotates, and revokes credentials by agent canonical ID", func() {
-		Expect(h.run("", "client-credentials", "get", "research-agent").code).To(Equal(4))
-		Expect(h.run("", "client-credentials", "rotate", "research-agent").code).To(Equal(4))
+		Expect(h.run("", "agent", "client-credentials", "get", "research-agent").code).To(Equal(4))
+		Expect(h.run("", "agent", "client-credentials", "rotate", "research-agent", "--yes").code).To(Equal(4))
 
-		created := h.runJSON("client-credentials", "create", "research-agent")
+		created := h.runJSON("agent", "client-credentials", "create", "research-agent")
 		Expect(created["client_secret"]).NotTo(BeEmpty())
 		Expect(created["previous_invalidated_at"]).To(BeNil())
 
-		info := h.runJSON("client-credentials", "get", "research-agent")
+		r := h.run("", "agent", "client-credentials", "create", "research-agent")
+		Expect(r.code).To(Equal(5), r.stderr)
+		Expect(r.stderr).To(ContainSubstring("already has client credentials"))
+
+		info := h.runJSON("agent", "client-credentials", "get", "research-agent")
 		Expect(info["client_id"]).To(Equal(created["client_id"]))
 		Expect(info).NotTo(HaveKey("client_secret"))
 
-		rotated := h.runJSON("client-credentials", "rotate", "research-agent")
+		r = h.run("", "agent", "client-credentials", "rotate", "research-agent")
+		Expect(r.code).To(Equal(2), r.stderr)
+		Expect(r.stderr).To(ContainSubstring("requires confirmation"))
+		rotated := h.runJSON("agent", "client-credentials", "rotate", "research-agent", "--yes")
 		Expect(rotated["client_secret"]).NotTo(Equal(created["client_secret"]))
 		Expect(rotated["previous_invalidated_at"]).NotTo(BeNil())
 
-		h.mustRun("client-credentials", "delete", "research-agent", "--yes")
-		Expect(h.run("", "client-credentials", "get", "research-agent").code).To(Equal(4))
+		h.mustRun("agent", "client-credentials", "delete", "research-agent", "--yes")
+		Expect(h.run("", "agent", "client-credentials", "get", "research-agent").code).To(Equal(4))
 	})
 })
 

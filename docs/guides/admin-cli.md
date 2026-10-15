@@ -115,11 +115,11 @@ aibctl agent create --display-name "Research Agent" --description "Summarises re
   --canonical-id research-agent --permission-set github-read:mandatory
 
 # Issue broker client credentials (local and hybrid server modes)
-aibctl client-credentials create research-agent
+aibctl agent client-credentials create research-agent
 ```
 
-Every resource supports `list`, `get`, `create`, `update`, and `delete`. Create and update
-accept either field flags or a document:
+Agents, services, and permission sets support `list`, `get`, `create`, `update`, and
+`delete`; their create and update accept either field flags or a document:
 
 ```bash
 aibctl agent create -f agent.yaml

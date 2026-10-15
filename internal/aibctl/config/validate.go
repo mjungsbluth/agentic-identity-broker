@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -11,6 +12,33 @@ import (
 )
 
 var contextNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// managedHeaders are set by aibctl on every request; extra headers must not replace them.
+var managedHeaders = []struct{ name, hint string }{
+	{"Accept", "always application/json"},
+	{"Content-Type", "always application/json"},
+	{"Prefer", "always reference-id=canonical"},
+	{"If-Match", "use service update --if-match"},
+	{"Authorization", "use auth.token or auth.token_command"},
+	{"Host", "use host_header"},
+}
+
+func validateHeaders(field string, headers map[string]string, principalHeader string) []error {
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(headers)) {
+		trimmed := strings.TrimSpace(name)
+		if strings.EqualFold(trimmed, principalHeader) {
+			errs = append(errs, fmt.Errorf("%s.%s: the principal header is set from auth.principal", field, name))
+			continue
+		}
+		for _, h := range managedHeaders {
+			if strings.EqualFold(trimmed, h.name) {
+				errs = append(errs, fmt.Errorf("%s.%s: %s is set by aibctl (%s)", field, name, h.name, h.hint))
+			}
+		}
+	}
+	return errs
+}
 
 // Validate checks the structural rules of a configuration file.
 func Validate(cfg *Config) error {
@@ -28,6 +56,7 @@ func Validate(cfg *Config) error {
 		errs = append(errs, validateServer(field+".server", c.Server)...)
 		errs = append(errs, validateAuth(field+".auth", c.Auth)...)
 		errs = append(errs, validateOutput(field+".output", c.Output)...)
+		errs = append(errs, validateHeaders(field+".headers", c.Headers, firstNonEmpty(c.Auth.PrincipalHeader, DefaultPrincipalHeader))...)
 		errs = append(errs, validateTimeout(field+".timeout", c.Timeout)...)
 	}
 	if cfg.CurrentContext != "" && !seen[cfg.CurrentContext] {
@@ -52,8 +81,9 @@ func validateResolved(r *Resolved) error {
 	if r.Principal == "" && r.Token == "" && len(r.TokenCommand) == 0 {
 		errs = append(errs, errors.New("auth: configure a principal, a token, or a token_command"))
 	}
-	if !slices.Contains(OutputFormats, r.Output) {
-		errs = append(errs, fmt.Errorf("output %q must be one of %s", r.Output, strings.Join(OutputFormats, ", ")))
+	errs = append(errs, validateHeaders("headers", r.Headers, r.PrincipalHeader)...)
+	if err := CheckOutputFormat(r.Output); err != nil {
+		errs = append(errs, err)
 	}
 	if r.Timeout <= 0 {
 		errs = append(errs, errors.New("timeout must be positive"))
@@ -94,6 +124,14 @@ func validateAuth(field string, a AuthConfig) []error {
 		errs = append(errs, fmt.Errorf("%s.principal_header: %q is not a valid header name", field, a.PrincipalHeader))
 	}
 	return errs
+}
+
+// CheckOutputFormat rejects formats other than table, wide, json, and yaml.
+func CheckOutputFormat(format string) error {
+	if !slices.Contains(OutputFormats, format) {
+		return fmt.Errorf("output %q must be one of %s", format, strings.Join(OutputFormats, ", "))
+	}
+	return nil
 }
 
 func validateOutput(field, output string) []error {

@@ -100,15 +100,20 @@ func TestAgentList(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
 	require.Len(t, lines, 3)
 	assert.Equal(t, []string{"ID", "DISPLAY_NAME", "CLIENT_ID", "PERMISSION_SETS", "SERVICES", "UPDATED"}, strings.Fields(lines[0]))
-	assert.Equal(t, []string{"research-agent", "Research", "cli-1", "github-read:mandatory", "github:optional", "2026-01-02T00:00:00Z"}, strings.Fields(lines[1]))
-	assert.Equal(t, []string{"22222222-2222-2222-2222-222222222222", "Plain", "-", "-", "-", "u"}, strings.Fields(lines[2]))
+	assert.Equal(t, []string{"research-agent", "Research", "cli-1", "1", "1", "2026-01-02T00:00:00Z"}, strings.Fields(lines[1]))
+	assert.Equal(t, []string{"22222222-2222-2222-2222-222222222222", "Plain", "-", "0", "0", "u"}, strings.Fields(lines[2]))
 
 	r = run(t, "", f.args(t, "agents", "ls", "--show-uuid", "--no-headers")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	assert.NotContains(t, r.stdout, "DISPLAY_NAME")
 	lines = strings.Split(strings.TrimSpace(r.stdout), "\n")
 	require.Len(t, lines, 2)
-	assert.Equal(t, []string{"research-agent", "Research", "cli-1", "github-read:mandatory", "github:optional", "2026-01-02T00:00:00Z", "11111111-1111-1111-1111-111111111111"}, strings.Fields(lines[0]))
+	assert.Equal(t, []string{"research-agent", "Research", "cli-1", "1", "1", "2026-01-02T00:00:00Z", "11111111-1111-1111-1111-111111111111"}, strings.Fields(lines[0]))
+
+	r = run(t, "", f.args(t, "agent", "list", "-o", "wide")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	lines = strings.Split(strings.TrimSpace(r.stdout), "\n")
+	assert.Equal(t, []string{"research-agent", "Research", "cli-1", "1", "1", "2026-01-02T00:00:00Z", "11111111-1111-1111-1111-111111111111", "-", "0", "0"}, strings.Fields(lines[1]))
 
 	r = run(t, "", f.args(t, "agent", "list", "-o", "json")...)
 	require.Equal(t, 0, r.code, r.stderr)
@@ -136,7 +141,7 @@ func TestAgentGet(t *testing.T) {
 func TestAgentCreateFromFlags(t *testing.T) {
 	f := newFakeAdmin(t)
 	r := run(t, "", f.args(t, "agent", "create", "--display-name", "Research", "--description", "d", "--canonical-id", "research-agent",
-		"--permission-set", "github-read:mandatory", "--permission-set", "other", "--service-requirement", "github=read,repo:mandatory",
+		"--permission-set", "github-read:mandatory", "--permission-set", "other", "--service-requirement", "github=read,user:email:mandatory", "--service-requirement-all", "jira",
 		"--redirect-uri", "https://a/cb", "--external-id", "ext-1")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	assert.Contains(t, r.stderr, `Agent "research-agent" created.`)
@@ -147,7 +152,7 @@ func TestAgentCreateFromFlags(t *testing.T) {
 	assert.Equal(t, "ext-1", req.body["external_id"])
 	assert.NotContains(t, req.body, "client_id")
 	assert.Equal(t, []any{map[string]any{"permission_set_id": "github-read", "requirement_type": "mandatory"}, map[string]any{"permission_set_id": "other", "requirement_type": "optional"}}, req.body["permission_sets"])
-	assert.Equal(t, []any{map[string]any{"service_id": "github", "requirement_type": "mandatory", "required_scopes": []any{"read", "repo"}}}, req.body["service_requirements"])
+	assert.Equal(t, []any{map[string]any{"service_id": "github", "requirement_type": "mandatory", "required_scopes": []any{"read", "user:email"}}, map[string]any{"service_id": "jira", "requirement_type": "optional", "required_scopes": []any{}, "require_all_scopes": true}}, req.body["service_requirements"])
 	assert.Equal(t, []any{"https://a/cb"}, req.body["redirect_uris"])
 }
 
@@ -164,6 +169,13 @@ func TestAgentCreateValidation(t *testing.T) {
 	r = run(t, "", f.args(t, "agent", "create", "--display-name", "x", "--permission-set", "ps:sometimes")...)
 	assert.Equal(t, aibctlcmd.ExitUsage, r.code)
 	assert.Contains(t, r.stderr, "mandatory or optional")
+
+	r = run(t, "", f.args(t, "agent", "create", "--file", "")...)
+	assert.Equal(t, aibctlcmd.ExitUsage, r.code)
+	assert.Contains(t, r.stderr, `--file needs a path, or "-" for stdin`)
+	f.mu.Lock()
+	assert.Empty(t, f.requests)
+	f.mu.Unlock()
 }
 
 func TestAgentCreateFromFile(t *testing.T) {
@@ -210,6 +222,22 @@ func TestAgentUpdateThreeState(t *testing.T) {
 	assert.NotContains(t, req.body, "canonical_id", "omitted key keeps the canonical id")
 }
 
+func TestAgentUpdatePreservesRequireAllScopes(t *testing.T) {
+	f := newFakeAdmin(t)
+	f.agent["service_requirements"] = []any{map[string]any{
+		"service_id": "github", "service_name": "GitHub", "requirement_type": "mandatory",
+		"required_scopes": []any{}, "require_all_scopes": true,
+	}}
+	r := run(t, "", f.args(t, "agent", "update", "research-agent", "--display-name", "X")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	reqs := f.last().body["service_requirements"].([]any)
+	assert.Equal(t, true, reqs[0].(map[string]any)["require_all_scopes"])
+	assert.Equal(t, []any{}, reqs[0].(map[string]any)["required_scopes"])
+	r = run(t, "", f.args(t, "agent", "get", "research-agent")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	assert.Contains(t, r.stdout, "Service Requirements:    github (mandatory: all scopes)")
+}
+
 func TestAgentDelete(t *testing.T) {
 	f := newFakeAdmin(t)
 	r := run(t, "", f.args(t, "agent", "delete", "research-agent")...)
@@ -232,12 +260,12 @@ func TestPermissionSetCommands(t *testing.T) {
 	r := run(t, "", f.args(t, "ps", "list", "--service", "github")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	assert.Equal(t, "/api/permission-sets?service_id=github", f.last().path)
-	assert.Equal(t, []string{"github-read", "GitHub", "Read", "github=read:mandatory", "u"}, strings.Fields(strings.Split(r.stdout, "\n")[1]))
+	assert.Equal(t, []string{"github-read", "GitHub", "Read", "1", "1", "u"}, strings.Fields(strings.Split(r.stdout, "\n")[1]))
 
-	r = run(t, "", f.args(t, "permission-set", "create", "--name", "GitHub Read", "--description", "d", "--canonical-id", "github-read", "--service-scope", "github=read,repo:mandatory")...)
+	r = run(t, "", f.args(t, "permission-set", "create", "--name", "GitHub Read", "--description", "d", "--canonical-id", "github-read", "--service-scope", "github=read:org,repo:mandatory")...)
 	require.Equal(t, 0, r.code, r.stderr)
 	req := f.last()
-	assert.Equal(t, []any{map[string]any{"service_id": "github", "scopes": []any{"read", "repo"}, "requirement_type": "mandatory"}}, req.body["service_scopes"])
+	assert.Equal(t, []any{map[string]any{"service_id": "github", "scopes": []any{"read:org", "repo"}, "requirement_type": "mandatory"}}, req.body["service_scopes"])
 	assert.Contains(t, r.stdout, "ID:              github-read")
 
 	r = run(t, "", f.args(t, "permission-set", "delete", "github-read", "--yes")...)

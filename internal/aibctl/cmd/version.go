@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/output"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/version"
 )
@@ -29,12 +30,23 @@ func (c *cli) newVersionCommand() *cobra.Command {
 				GoVersion: runtime.Version(),
 				Platform:  runtime.GOOS + "/" + runtime.GOARCH,
 			}
-			format, _ := cmd.Flags().GetString("output")
-			if format == string(output.FormatJSON) || format == string(output.FormatYAML) {
+			overlay, err := config.LoadOverlay(cmd)
+			if err != nil {
+				return &UsageError{Err: err, Cmd: cmd}
+			}
+			format := ""
+			if overlay.Output != nil {
+				format = *overlay.Output
+			}
+			switch format {
+			case string(output.FormatJSON), string(output.FormatYAML):
 				p := &output.Printer{Out: c.deps.Stdout, Format: output.Format(format)}
 				return p.PrintObject(info, nil)
+			case "", string(output.FormatTable), string(output.FormatWide):
+			default:
+				return &UsageError{Err: config.CheckOutputFormat(format), Cmd: cmd}
 			}
-			_, err := fmt.Fprintf(c.deps.Stdout, "aibctl %s (commit %s, %s, %s)\n", info.Version, info.Commit, info.GoVersion, info.Platform)
+			_, err = fmt.Fprintf(c.deps.Stdout, "aibctl %s (commit %s, %s, %s)\n", info.Version, info.Commit, info.GoVersion, info.Platform)
 			return err
 		},
 	}

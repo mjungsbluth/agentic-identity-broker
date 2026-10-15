@@ -17,20 +17,21 @@ type keyFamily struct {
 	aliases  []string
 	short    string
 	noun     string
+	title    string
 	basePath string
 }
 
 func (c *cli) newSigningKeyCommand() *cobra.Command {
 	return c.newKeyFamilyCommand(keyFamily{
 		use: "signing-key", aliases: []string{"signing-keys"},
-		short: "Manage OAuth2 server token signing keys", noun: "signing key", basePath: client.SigningKeysPath,
+		short: "Manage OAuth2 server token signing keys", noun: "signing key", title: "Signing key", basePath: client.SigningKeysPath,
 	})
 }
 
 func (c *cli) newCIMDClientKeyCommand() *cobra.Command {
 	return c.newKeyFamilyCommand(keyFamily{
 		use: "cimd-client-key", aliases: []string{"cimd-client-keys"},
-		short: "Manage CIMD client-authentication keys", noun: "CIMD client key", basePath: client.CIMDClientKeysPath,
+		short: "Manage CIMD client-authentication keys", noun: "CIMD client key", title: "CIMD client key", basePath: client.CIMDClientKeysPath,
 	})
 }
 
@@ -111,7 +112,7 @@ func (c *cli) newKeyFamilyCommand(family keyFamily) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(c.deps.Stderr, "%s %q created.\n", capitalize(family.noun), k.KID)
+			_, _ = fmt.Fprintf(c.deps.Stderr, "%s %q created.\n", family.title, k.KID)
 			return rt.Printer.PrintObject(k, func() [][2]string { return keyDetails(k) })
 		},
 	}
@@ -135,7 +136,7 @@ func (c *cli) newKeyFamilyCommand(family keyFamily) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(c.deps.Stderr, "%s %q is now current.\n", capitalize(family.noun), k.KID)
+			_, _ = fmt.Fprintf(c.deps.Stderr, "%s %q is now current.\n", family.title, k.KID)
 			return rt.Printer.PrintObject(k, func() [][2]string { return keyDetails(k) })
 		},
 	}
@@ -159,7 +160,7 @@ func (c *cli) newKeyFamilyCommand(family keyFamily) *cobra.Command {
 			if err := rt.Client.DeleteKey(ctx, family.basePath, args[0]); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(c.deps.Stderr, "%s %q deleted.\n", capitalize(family.noun), args[0])
+			_, _ = fmt.Fprintf(c.deps.Stderr, "%s %q deleted.\n", family.title, args[0])
 			return nil
 		},
 	}
@@ -167,11 +168,4 @@ func (c *cli) newKeyFamilyCommand(family keyFamily) *cobra.Command {
 
 	cmd.AddCommand(list, create, setCurrent, del)
 	return cmd
-}
-
-func capitalize(s string) string {
-	if s == "" {
-		return s
-	}
-	return string(s[0]-'a'+'A') + s[1:]
 }

@@ -131,6 +131,11 @@ func TestResolvePrecedence(t *testing.T) {
 			},
 		},
 		{
+			name:    "principal header override collides with context header",
+			args:    []string{"--context", "staging", "--principal-header", "X-Tenant"},
+			wantErr: "the principal header is set from auth.principal",
+		},
+		{
 			name:    "unknown context",
 			args:    []string{"--context", "nope"},
 			wantErr: `context "nope" not found`,
@@ -240,6 +245,16 @@ func TestValidateFile(t *testing.T) {
 			name:    "negative timeout",
 			cfg:     config.Config{Defaults: config.Defaults{Timeout: -time.Second}},
 			wantErr: "timeout",
+		},
+		{
+			name:    "managed Prefer header",
+			cfg:     config.Config{Contexts: []config.Context{{Name: "a", Server: "http://x", Headers: map[string]string{"prefer": "return=minimal"}}}},
+			wantErr: "Prefer is set by aibctl",
+		},
+		{
+			name:    "principal header spoof",
+			cfg:     config.Config{Contexts: []config.Context{{Name: "a", Server: "http://x", Headers: map[string]string{"X-Remote-User": "spoof"}}}},
+			wantErr: "the principal header is set from auth.principal",
 		},
 	}
 	for _, tc := range tests {

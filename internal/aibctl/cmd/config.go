@@ -7,6 +7,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/aibctl/output"
 )
 
 func (c *cli) newConfigCommand() *cobra.Command {
@@ -24,9 +25,20 @@ func (c *cli) newConfigCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			format := loaded.LocalOutput()
+			if err := config.CheckOutputFormat(format); err != nil {
+				return &UsageError{Err: err, Cmd: cmd}
+			}
 			cfg := loaded.File
 			if show, _ := cmd.Flags().GetBool("show-secrets"); !show {
 				cfg = config.Redacted(cfg)
+			}
+			if format == string(output.FormatJSON) {
+				doc, err := config.Document(cfg)
+				if err != nil {
+					return err
+				}
+				return (&output.Printer{Out: c.deps.Stdout, Format: output.FormatJSON}).PrintObject(doc, nil)
 			}
 			enc := yaml.NewEncoder(c.deps.Stdout)
 			enc.SetIndent(2)

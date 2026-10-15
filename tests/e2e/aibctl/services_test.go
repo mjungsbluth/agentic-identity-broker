@@ -26,7 +26,7 @@ var _ = Describe("US3 Services and protected resources", func() {
 		rows := tableRows(h.mustRun("service", "list").stdout)
 		Expect(rows).To(HaveLen(2))
 		Expect(rows[1][0]).To(Equal("github"))
-		Expect(rows[1]).To(ContainElement("https://api.github.com"))
+		Expect(rows[1][5]).To(Equal("1"))
 
 		service := h.runJSON("service", "get", "github")
 		Expect(service["client_secret"]).To(Equal("REDACTED"))
