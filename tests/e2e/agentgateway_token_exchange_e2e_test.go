@@ -40,41 +40,45 @@ type mcpAuthorizationKey struct{}
 // The agentgateway oauthTokenExchange policy (issue #26) authenticates to the broker with
 // private_key_jwt, and the broker trusts its public key through an inline key set.
 var _ = Describe("agentgateway oauthTokenExchange with an inline client-assertion key set", Label("docker", "agentgateway"), func() {
-	var (
-		env             *trustAnchorEnv
-		agentgatewayURL string
-	)
-
-	BeforeEach(func(ctx SpecContext) {
+	BeforeEach(func() {
 		if err := bootstrap.CanAccessContainerRuntime(); err != nil {
 			Expect(os.Getenv("CI")).To(BeEmpty(), "agentgateway E2E scenarios need Docker or Podman in CI")
 			Skip("Skipping agentgateway E2E scenario: " + err.Error())
 		}
+	})
 
-		env = newTrustAnchorEnv()
-		DeferCleanup(env.close)
-		gatewayKey := helpers.NewLocalRS256Key(agentgatewaySigningKID)
-		config := env.localConfig(ports.ClientAssertionTrustConfig{
-			IssuerURI: agentgatewayClientID,
-			JWKS:      helpers.PublicKeySet(gatewayKey),
-		})
-		config.TokenExchange.Authorization.CEL.Expression = fmt.Sprintf("client_assertion.sub == %q", agentgatewayClientID)
-		env.start(config)
+	Context("when the broker trusts agentgateway's inline key and agentgateway fronts an MCP server", func() {
+		var (
+			env             *trustAnchorEnv
+			agentgatewayURL string
+		)
 
-		mcpPort := startAuthorizationDigestMCPServer()
-		agentgatewayURL = startAgentgatewayWithTokenExchange(ctx, hostPort(env.enduserServer.BaseURL()), mcpPort, gatewayKey)
-	}, NodeTimeout(5*time.Minute))
+		BeforeEach(func(ctx SpecContext) {
+			env = newTrustAnchorEnv()
+			DeferCleanup(env.close)
+			gatewayKey := helpers.NewLocalRS256Key(agentgatewaySigningKID)
+			config := env.localConfig(ports.ClientAssertionTrustConfig{
+				IssuerURI: agentgatewayClientID,
+				JWKS:      helpers.PublicKeySet(gatewayKey),
+			})
+			config.TokenExchange.Authorization.CEL.Expression = fmt.Sprintf("client_assertion.sub == %q", agentgatewayClientID)
+			env.start(config)
 
-	// US1-S2 from specs/052-inline-jwks-trust-anchors/spec.md
-	It("exchanges the agent's broker token for the stored GitHub token before agentgateway calls the MCP server", func(ctx SpecContext) {
-		mcpClient := connectMCPClient(ctx, agentgatewayURL, env.mintLocalSubjectToken())
+			mcpPort := startAuthorizationDigestMCPServer()
+			agentgatewayURL = startAgentgatewayWithTokenExchange(ctx, hostPort(env.enduserServer.BaseURL()), mcpPort, gatewayKey)
+		}, NodeTimeout(5*time.Minute))
 
-		result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "whoami"}})
+		// US1-S2 from specs/052-inline-jwks-trust-anchors/spec.md
+		It("exchanges the agent's broker token for the stored GitHub token before agentgateway calls the MCP server", func(ctx SpecContext) {
+			mcpClient := connectMCPClient(ctx, agentgatewayURL, env.mintLocalSubjectToken())
 
-		Expect(err).ToNot(HaveOccurred())
-		Expect(result.IsError).To(BeFalse())
-		Expect(result.Content).To(ConsistOf(HaveField("Text", authorizationDigest("Bearer github-token-xyz"))))
-	}, NodeTimeout(time.Minute))
+			result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "whoami"}})
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(result.IsError).To(BeFalse())
+			Expect(result.Content).To(ConsistOf(HaveField("Text", authorizationDigest("Bearer github-token-xyz"))))
+		}, NodeTimeout(time.Minute))
+	})
 })
 
 func agentgatewayImage() string {
