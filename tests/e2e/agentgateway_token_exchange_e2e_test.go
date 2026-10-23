@@ -64,7 +64,8 @@ var _ = Describe("agentgateway oauthTokenExchange with an inline client-assertio
 			})
 			config.TokenExchange.Authorization.CEL.Expression = fmt.Sprintf("client_assertion.sub == %q", agentgatewayClientID)
 			config.TokenExchange.ExpectedAudience = brokerTokenEndpoint
-			config.OAuth2AuthServer.Local.TokenClaimsExpression = fmt.Sprintf(`{"azp": agent.id, "aud": %q}`, brokerTokenEndpoint)
+			config.OAuth2AuthServer.Local.TokenClaimsExpression = fmt.Sprintf(`{"agent_id": agent.id, "azp": agent.id, "aud": %q}`, brokerTokenEndpoint)
+			config.TokenExchange.ClaimExtraction.AgentIDExpression = "has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp)"
 			env.start(config)
 
 			mcpPort := startAuthorizationDigestMCPServer()

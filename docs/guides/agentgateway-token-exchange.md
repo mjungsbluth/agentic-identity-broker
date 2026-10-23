@@ -144,7 +144,8 @@ token_exchange:
       {"keys":[{"kty":"RSA","kid":"gateway-2026-09","alg":"RS256","use":"sig","e":"AQAB","n":"<base64url modulus>"}]}
   claim_extraction:
     principal_expression: "subject_token.sub"
-    agent_id_expression: "subject_token.azp"
+    # Broker-issued tokens carry agent_id. Upstream tokens carry the client ID in azp.
+    agent_id_expression: "has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp)"
   authorization:
     type: "cel"
     cel:
@@ -163,7 +164,7 @@ must carry that URL in `aud` too. In `local` mode, set it through the issued-tok
 ```yaml
 oauth2_authorization_server:
   local:
-    token_claims_expression: '{"azp": agent.id, "aud": "https://broker.example.com/oauth2/token"}'
+    token_claims_expression: '{"agent_id": agent.id, "azp": agent.id, "aud": "https://broker.example.com/oauth2/token"}'
 ```
 
 ## The request that agentgateway sends
