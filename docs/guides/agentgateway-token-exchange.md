@@ -42,7 +42,7 @@ approvals.
   agentgateway `resources` list. See
   [Manage agents and services](/docs/guides/manage-agents-and-services).
 - Agents that send agentgateway a subject token that the broker accepts. Its `aud` must
-  contain the broker audience, `token-exchange-broker` by default. See
+  contain the broker audience. This guide uses the broker token endpoint URL. See
   [OAuth2 server modes](/docs/concepts/oauth2-server-modes).
 
 ## How the exchange flows
@@ -114,7 +114,7 @@ binds:
               clientAuth:
                 method: privateKeyJwt
                 clientId: https://gateway.example.com
-                assertionAudience: token-exchange-broker
+                assertionAudience: https://broker.example.com/oauth2/token
                 signingKey:
                   file: /etc/agentgateway/keys/gateway-signing.key
                 alg: RS256
@@ -128,7 +128,7 @@ Each agentgateway setting must match a broker setting:
 | `host` and `path` | The broker end-user URL and `/oauth2/token` |
 | `resources` | A `protected_resources` entry of the service whose token the backend needs |
 | `clientAuth.clientId` | `token_exchange.client_assertion.issuer_uri`. It is also the client assertion `sub` that the CEL policy sees. |
-| `clientAuth.assertionAudience` | `token_exchange.expected_audience`, `token-exchange-broker` by default |
+| `clientAuth.assertionAudience` | `token_exchange.expected_audience`. Use the full broker token endpoint URL. |
 | `clientAuth.alg` and `clientAuth.kid` | `alg` and `kid` of a key in `token_exchange.client_assertion.jwks` |
 
 ## Step 3: Configure the broker
@@ -137,6 +137,7 @@ Make the gateway `clientId` the client-assertion issuer. Then put the JWK Set fr
 
 ```yaml
 token_exchange:
+  expected_audience: "https://broker.example.com/oauth2/token" # agentgateway assertionAudience
   client_assertion:
     issuer_uri: "https://gateway.example.com" # agentgateway clientId; never contacted
     jwks: |
@@ -155,9 +156,15 @@ You can also set the key set through `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSE
 Use `jwks_file` to rotate keys without a restart.
 See [Trust-anchor key sets](/docs/configuration#trust-anchor-key-sets) for the key-set rules.
 
-The broker uses one `expected_audience` for client assertions and subject tokens. If you
-change it, set `assertionAudience` to the same value. Subject tokens must then carry it in
-`aud` too.
+The broker checks the same `expected_audience` in client assertions and subject tokens. The
+default is `token-exchange-broker`. When you set it to the token endpoint URL, subject tokens
+must carry that URL in `aud` too. In `local` mode, set it through the issued-token claims:
+
+```yaml
+oauth2_authorization_server:
+  local:
+    token_claims_expression: '{"azp": agent.id, "aud": "https://broker.example.com/oauth2/token"}'
+```
 
 ## The request that agentgateway sends
 
@@ -186,7 +193,7 @@ Decoded `client_assertion` (synthetic):
   "payload": {
     "iss": "https://gateway.example.com",
     "sub": "https://gateway.example.com",
-    "aud": "token-exchange-broker",
+    "aud": "https://broker.example.com/oauth2/token",
     "jti": "417174fe-17bf-4212-a4bf-46bccf33ff9e",
     "nbf": 1792683407,
     "iat": 1792683407,

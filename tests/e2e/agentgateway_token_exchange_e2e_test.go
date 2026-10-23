@@ -31,6 +31,7 @@ const (
 	defaultAgentgatewayImage = "cr.agentgateway.dev/agentgateway:v1.5.0"
 
 	agentgatewayClientID   = "https://gateway.example.com"
+	brokerTokenEndpoint    = "https://broker.example.com/oauth2/token"
 	agentgatewaySigningKID = "gateway-2026-09"
 	agentgatewayKeyPath    = "/etc/agentgateway/keys/gateway-signing.key"
 )
@@ -39,7 +40,7 @@ type mcpAuthorizationKey struct{}
 
 // The agentgateway oauthTokenExchange policy (issue #26) authenticates to the broker with
 // private_key_jwt, and the broker trusts its public key through an inline key set.
-var _ = Describe("agentgateway oauthTokenExchange with an inline client-assertion key set", Label("docker", "agentgateway"), func() {
+var _ = Describe("agentgateway oauthTokenExchange with an inline client-assertion key set", Label("docker"), func() {
 	BeforeEach(func() {
 		if err := bootstrap.CanAccessContainerRuntime(); err != nil {
 			Expect(os.Getenv("CI")).To(BeEmpty(), "agentgateway E2E scenarios need Docker or Podman in CI")
@@ -62,6 +63,8 @@ var _ = Describe("agentgateway oauthTokenExchange with an inline client-assertio
 				JWKS:      helpers.PublicKeySet(gatewayKey),
 			})
 			config.TokenExchange.Authorization.CEL.Expression = fmt.Sprintf("client_assertion.sub == %q", agentgatewayClientID)
+			config.TokenExchange.ExpectedAudience = brokerTokenEndpoint
+			config.OAuth2AuthServer.Local.TokenClaimsExpression = fmt.Sprintf(`{"azp": agent.id, "aud": %q}`, brokerTokenEndpoint)
 			env.start(config)
 
 			mcpPort := startAuthorizationDigestMCPServer()
@@ -140,7 +143,7 @@ func startAgentgatewayWithTokenExchange(ctx context.Context, brokerPort, mcpPort
                   file: %s
                 alg: RS256
                 kid: %s
-`, mcpPort, brokerPort, githubResourceURI, agentgatewayClientID, brokerAudience, agentgatewayKeyPath, agentgatewaySigningKID)
+`, mcpPort, brokerPort, githubResourceURI, agentgatewayClientID, brokerTokenEndpoint, agentgatewayKeyPath, agentgatewaySigningKID)
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
