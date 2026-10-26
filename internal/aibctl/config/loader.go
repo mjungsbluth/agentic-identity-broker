@@ -293,8 +293,10 @@ func Resolve(loaded *Loaded) (*Resolved, error) {
 	}
 
 	var err error
-	if r.Token, err = expandEnv("auth.token", r.Token); err != nil {
-		return nil, err
+	if o.Token == nil {
+		if r.Token, err = expandEnv("auth.token", r.Token); err != nil {
+			return nil, err
+		}
 	}
 	for k, v := range r.Headers {
 		if r.Headers[k], err = expandEnv("headers."+k, v); err != nil {

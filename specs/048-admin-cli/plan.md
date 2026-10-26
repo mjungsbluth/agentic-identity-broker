@@ -52,7 +52,7 @@ Phase 1 foundation → Phase 2 agents and permission sets → Phase 3 services a
 
 ## Testing Strategy
 
-- **E2E**: `tests/e2e/aibctl/` (`just test-e2e-aibctl`), 19 scenarios.
+- **E2E**: `tests/e2e/aibctl/` (`just test-e2e-aibctl`), 20 scenarios.
 - **Unit**: `just aibctl-test` (`go test -race ./internal/aibctl/... ./cmd/aibctl/...`).
 - **Lint**: `just check`.
 

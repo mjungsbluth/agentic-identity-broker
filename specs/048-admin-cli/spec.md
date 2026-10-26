@@ -328,7 +328,7 @@ Agent "research-agent" deleted.
 - **FR-014**: The CLI MUST generate completion scripts for bash, zsh, fish, and PowerShell and MUST complete resource identifiers from the API, bounded by `AIBCTL_COMPLETION_TIMEOUT` (default 2s), failing silently.
 - **FR-015**: `config view` MUST redact `auth.token` and header values whose name contains `authorization`, `token`, `secret`, `cookie`, or `password` unless `--show-secrets` is given.
 - **FR-016**: `version` MUST print the version and commit injected at build time.
-- **FR-017**: The implementation MUST NOT import broker packages (`internal/domain`, `internal/ports`, `internal/adapters`, `internal/app`, `internal/extproc`); request and response types are declared from the OpenAPI document.
+- **FR-017**: The implementation MUST NOT import broker packages (`internal/domain`, `internal/ports`, `internal/adapters`, `internal/app`, `internal/extproc`, `internal/config`); request and response types are declared from the OpenAPI document.
 
 ### Domain Model
 
@@ -498,7 +498,7 @@ Not applicable. The feature has no web UI; the terminal UI was explicitly exclud
 
 ### Measurable Outcomes
 
-- **SC-001**: Every acceptance scenario (US1-S1 … US7-S1, 19 in total) has exactly one `It()` in `tests/e2e/aibctl/` and passes against the production bootstrap.
+- **SC-001**: Every acceptance scenario (US1-S1 … US7-S1 and US9-S1, 20 in total) has exactly one `It()` in `tests/e2e/aibctl/` and passes against the production bootstrap.
 - **SC-002**: Every admin operation documented in `docs/guides/manage-agents-and-services.md` and `docs/guides/operate-oauth2-server-modes.md` with `curl` can be performed with a single `aibctl` command.
 - **SC-003**: `just check` (format, vet, lint) reports no issues for `internal/aibctl`, `cmd/aibctl`, and `tests/e2e/aibctl`; `just aibctl-test` passes with the race detector.
 - **SC-004**: Release archives exist for linux amd64/arm64, darwin amd64/arm64, and windows amd64, and `aibctl version` reports the release tag.

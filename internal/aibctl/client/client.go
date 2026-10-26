@@ -97,10 +97,11 @@ func (c *Client) do(ctx context.Context, r request) (*response, error) {
 	}
 
 	c.logf("> %s %s", req.Method, req.URL)
-	httpClient := c.HTTP
-	if httpClient == nil {
-		httpClient = http.DefaultClient
+	httpClient := http.Client{}
+	if c.HTTP != nil {
+		httpClient = *c.HTTP
 	}
+	httpClient.CheckRedirect = refuseRedirect
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", r.method, u.Path, err)
@@ -116,6 +117,12 @@ func (c *Client) do(ctx context.Context, r request) (*response, error) {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	return &response{status: resp.StatusCode, header: resp.Header, body: body}, nil
+}
+
+// refuseRedirect keeps the bearer token and principal header from following a
+// redirect to another origin or a plaintext downgrade; the admin API never redirects.
+func refuseRedirect(req *http.Request, _ []*http.Request) error {
+	return fmt.Errorf("refusing to follow redirect to %s", req.URL.Redacted())
 }
 
 func (c *Client) logf(format string, args ...any) {

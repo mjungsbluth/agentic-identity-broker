@@ -165,7 +165,7 @@ Standard output carries data only; prompts, confirmations, and errors go to stan
 error. Use `-o json` and the exit code:
 
 ```bash
-aibctl agent list -o json | jq -r '.[].canonical_id // .[].id'
+aibctl agent list -o json | jq -r '.[] | .canonical_id // .id'
 if ! aibctl agent get research-agent -o json >/dev/null; then
   echo "missing"   # exit code 4
 fi

@@ -1226,7 +1226,7 @@ ExtProc leverages the broker's shared OpenTelemetry infrastructure (ADR 011, ADR
 
 #### 3.3.1. Command Model
 
-Nouns map to Admin API resources, verbs to operations: `agent` (with `client-credentials`), `service` (with `protected-resource`), `permission-set`, `signing-key`, `cimd-client-key`, `session` (`sweep`), plus `context`, `config`, `health`, `version`, and `completion`. `create` and `update` accept a JSON or YAML document (`-f FILE|-`) or field flags; `-f` is a full replacement, flags fetch the current representation and overlay the given fields. Destructive verbs require `--yes`, `AIBCTL_ASSUME_YES=1`, or an interactive confirmation. Standard output carries data only (`table`, `wide`, `json`, `yaml`); everything else goes to standard error. Exit codes: 0 success, 1 generic, 2 usage, 3 authentication, 4 not found, 5 conflict or precondition, 6 server-side validation.
+Nouns map to Admin API resources, verbs to operations: `agent` (with `client-credentials`), `service` (with `protected-resource`), `permission-set`, `signing-key`, `cimd-client-key`, `session` (`sweep`), plus `context`, `config`, `health`, `version`, and `completion`. `create` and `update` accept a JSON or YAML document (`-f FILE|-`) or field flags; `-f` is a full replacement, flags fetch the current representation and overlay the given fields. Destructive verbs require `--yes`, `AIBCTL_ASSUME_YES=1`, or an interactive confirmation. Standard output carries data only (`table`, `wide`, `json`, `yaml`); everything else goes to standard error. Exit codes: 0 for success, 1 for generic failures, 2 for usage, 3 for authentication, 4 for not found, 5 for conflict or precondition, 6 for server-side validation.
 
 #### 3.3.2. Authentication Trust Boundary
 

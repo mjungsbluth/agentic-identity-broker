@@ -187,7 +187,16 @@ func TestServiceUpdateUsesETag(t *testing.T) {
 	require.Equal(t, 0, r.code, r.stderr)
 	req = f.last()
 	assert.Equal(t, `"3"`, req.ifMatch)
-	assert.NotContains(t, req.body, "protected_resources", "omitted set is preserved server-side")
+	assert.Equal(t, []any{"https://api.github.com/"}, req.body["protected_resources"], "an omitted set is carried so the server enforces If-Match")
+}
+
+func TestServiceUpdateWithoutProtectedResourcesIsConditional(t *testing.T) {
+	f := newFakeServices(t)
+	r := run(t, "", f.args(t, "service", "update", "cimd", "--display-name", "Renamed")...)
+	require.Equal(t, 0, r.code, r.stderr)
+	req := f.last()
+	assert.Equal(t, f.etag, req.ifMatch)
+	assert.Equal(t, []any{}, req.body["protected_resources"], "an empty set is sent so the server enforces If-Match")
 }
 
 func TestServiceUpdateOmitsGeneratedCIMDClientID(t *testing.T) {

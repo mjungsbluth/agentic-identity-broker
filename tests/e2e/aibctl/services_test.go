@@ -77,7 +77,7 @@ var _ = Describe("US3 Services and protected resources", func() {
 		Expect(r.code).To(Equal(2), "a static secret must be re-supplied")
 		Expect(r.stderr).To(ContainSubstring("--client-secret"))
 
-		r = h.mustRun("service", "update", "github", "--display-name", "GitHub Enterprise", "--client-secret", "rotated-again")
+		h.mustRun("service", "update", "github", "--display-name", "GitHub Enterprise", "--client-secret", "rotated-again")
 		Expect(h.runJSON("service", "get", "github")["display_name"]).To(Equal("GitHub Enterprise"))
 
 		r = h.run("", "service", "update", "github", "--display-name", "Stale", "--client-secret", "x", "--if-match", `"1"`)

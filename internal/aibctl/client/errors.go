@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -40,8 +41,8 @@ func (e *APIError) Error() string {
 }
 
 func IsStatus(err error, status int) bool {
-	apiErr, ok := err.(*APIError)
-	return ok && apiErr.Status == status
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Status == status
 }
 
 func newAPIError(resp *http.Response) *APIError {

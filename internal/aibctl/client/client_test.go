@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -151,4 +152,39 @@ func TestServiceWriteDropsRedactedSecret(t *testing.T) {
 	assert.NotContains(t, m, "client_secret")
 	assert.Equal(t, "t", m["endpoints"].(map[string]any)["token_endpoint"])
 	assert.Equal(t, []any{}, m["scopes"])
+}
+
+func TestIsStatusMatchesWrappedAPIError(t *testing.T) {
+	err := fmt.Errorf("get agent: %w", &client.APIError{Status: http.StatusNotFound})
+	assert.True(t, client.IsStatus(err, http.StatusNotFound))
+	assert.False(t, client.IsStatus(err, http.StatusConflict))
+}
+
+func TestRedirectsAreNotFollowed(t *testing.T) {
+	var followed bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		followed = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/health", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	c := &client.Client{BaseURL: origin.URL, HTTP: origin.Client(), Auth: headerAuth{}}
+	_, err := c.Health(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "redirect")
+	assert.False(t, followed, "credentials must not be forwarded to a redirect target")
+}
+
+func TestServiceWriteKeepsEmptyProtectedResources(t *testing.T) {
+	out, err := json.Marshal(client.ServiceWrite{ProtectedResources: []string{}})
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"protected_resources":[]`)
+
+	out, err = json.Marshal(client.ServiceWrite{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "protected_resources")
 }

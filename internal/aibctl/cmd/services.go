@@ -376,6 +376,9 @@ on --if-match, so a concurrent change fails with exit code 5.`,
 					return &UsageError{Err: err, Cmd: cmd}
 				}
 			}
+			if body.ProtectedResources == nil {
+				body.ProtectedResources = append([]string{}, current.ProtectedResources...)
+			}
 			omitGeneratedClientID(&body, current)
 			if err := checkServiceSecret(&body, current); err != nil {
 				return &UsageError{Err: err, Cmd: cmd}

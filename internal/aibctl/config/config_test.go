@@ -340,3 +340,12 @@ func TestDefaultPathUsesUserConfigDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/home/someone/.config/aibctl/config.yaml", path)
 }
+
+func TestResolveTokenFlagIsLiteral(t *testing.T) {
+	path := writeConfig(t, "current_context: a\ncontexts:\n  - name: a\n    server: http://x\n    auth:\n      token: ${AIBCTL_TEST_DEFINITELY_UNSET}\n")
+	loaded, err := config.LoadFromViper(viper.New(), newCmd(t, "--config", path, "--token", "p$ss${word}"))
+	require.NoError(t, err)
+	r, err := config.Resolve(loaded)
+	require.NoError(t, err)
+	assert.Equal(t, "p$ss${word}", r.Token)
+}

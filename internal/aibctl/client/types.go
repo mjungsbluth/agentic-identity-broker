@@ -151,7 +151,7 @@ type ServiceWrite struct {
 	Discovery               Discovery         `json:"discovery"`
 	Endpoints               *Endpoints        `json:"endpoints,omitempty"`
 	Scopes                  []Scope           `json:"scopes"`
-	ProtectedResources      []string          `json:"protected_resources,omitempty"`
+	ProtectedResources      []string          `json:"protected_resources,omitzero"`
 	AuthorizationParams     map[string]string `json:"authorization_params,omitempty"`
 }
 
