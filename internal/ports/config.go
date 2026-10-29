@@ -370,12 +370,20 @@ type MultiAgentClientConfig struct {
 // CIMDConfig holds Client ID Metadata Document fetch and validation settings.
 // CIMD is disabled by default (Enabled: false); SSRF protection is always active.
 type CIMDConfig struct {
-	Enabled             bool            `mapstructure:"enabled"`
-	FetchTimeout        time.Duration   `mapstructure:"fetch_timeout"`
-	MaxResponseBytes    int             `mapstructure:"max_response_bytes"`
-	Cache               CIMDCacheConfig `mapstructure:"cache"`
-	SSRF                CIMDSSRFConfig  `mapstructure:"ssrf"`
-	ClientNameBlocklist []string        `mapstructure:"client_name_blocklist"`
+	Enabled              bool                           `mapstructure:"enabled"`
+	FetchTimeout         time.Duration                  `mapstructure:"fetch_timeout"`
+	MaxResponseBytes     int                            `mapstructure:"max_response_bytes"`
+	Cache                CIMDCacheConfig                `mapstructure:"cache"`
+	SSRF                 CIMDSSRFConfig                 `mapstructure:"ssrf"`
+	ClientNameBlocklist  []string                       `mapstructure:"client_name_blocklist"`
+	ClientAuthentication CIMDClientAuthenticationConfig `mapstructure:"client_authentication"`
+}
+
+type CIMDClientAuthenticationConfig struct {
+	KeySetCacheTTL           time.Duration `mapstructure:"key_set_cache_ttl"`
+	KeySetMinRefetchInterval time.Duration `mapstructure:"key_set_min_refetch_interval"`
+	KeySetMaxBytes           int           `mapstructure:"key_set_max_bytes"`
+	KeySetFetchTimeout       time.Duration `mapstructure:"key_set_fetch_timeout"`
 }
 
 // CIMDCacheConfig holds operator TTL bounds and entry cap for CIMD response caching.
@@ -401,6 +409,12 @@ func DefaultCIMDConfig() CIMDConfig {
 			MinTTL:     60 * time.Second,
 			MaxEntries: 1000,
 		},
+		ClientAuthentication: CIMDClientAuthenticationConfig{
+			KeySetCacheTTL:           time.Hour,
+			KeySetMinRefetchInterval: 5 * time.Minute,
+			KeySetMaxBytes:           65536,
+			KeySetFetchTimeout:       5 * time.Second,
+		},
 	}
 }
 
@@ -416,20 +430,32 @@ type ProxyModeConfig struct {
 
 const DefaultSigningKeyBootstrapTimeout = 90 * time.Second
 
+// DefaultClientSecretHashingMaxConcurrent is the default number of client secret hashes that
+// may run at once. Each Argon2id hash allocates 64 MiB and already spreads its four lanes
+// across CPUs, so a higher value adds memory, not throughput.
+const DefaultClientSecretHashingMaxConcurrent = 2
+
 // LocalModeConfig holds local token issuance configuration for local/hybrid mode.
 type LocalModeConfig struct {
 	// IssuerURI is the JWT iss claim for locally-minted tokens. Optional — defaults to
 	// server.enduser.public_url when empty, allowing independent control behind CDNs or proxies.
-	IssuerURI             string                 `mapstructure:"issuer_uri"`
-	TokenTTL              time.Duration          `mapstructure:"token_ttl"`
-	RefreshTokenTTL       time.Duration          `mapstructure:"refresh_token_ttl"`
-	TokenClaimsExpression string                 `mapstructure:"token_claims_expression"`
-	SigningKeys           LocalSigningKeysConfig `mapstructure:"signing_keys"`
+	IssuerURI             string                    `mapstructure:"issuer_uri"`
+	TokenTTL              time.Duration             `mapstructure:"token_ttl"`
+	RefreshTokenTTL       time.Duration             `mapstructure:"refresh_token_ttl"`
+	TokenClaimsExpression string                    `mapstructure:"token_claims_expression"`
+	SigningKeys           LocalSigningKeysConfig    `mapstructure:"signing_keys"`
+	ClientSecretHashing   ClientSecretHashingConfig `mapstructure:"client_secret_hashing"`
 }
 
 // LocalSigningKeysConfig holds local signing-key startup settings.
 type LocalSigningKeysConfig struct {
 	BootstrapTimeout time.Duration `mapstructure:"bootstrap_timeout"`
+}
+
+// ClientSecretHashingConfig bounds broker client secret hashing in local/hybrid mode.
+type ClientSecretHashingConfig struct {
+	// MaxConcurrent is the number of hashes that may run at once. Further requests wait.
+	MaxConcurrent int `mapstructure:"max_concurrent"`
 }
 
 // OAuth2AuthServerConfig represents configuration for OAuth2 authorization server functionality.
@@ -484,7 +510,7 @@ func (c *OAuth2AuthServerConfig) validateProxyMode() error {
 		return c.newValidationError("oauth2_authorization_server.cimd.enabled requires mode 'local' or 'hybrid'; CIMD is incompatible with proxy mode")
 	}
 
-	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 {
+	if c.Local.TokenTTL != 0 || c.Local.RefreshTokenTTL != 0 || c.Local.TokenClaimsExpression != "" || c.Local.IssuerURI != "" || c.Local.SigningKeys.BootstrapTimeout != 0 || c.Local.ClientSecretHashing.MaxConcurrent != 0 {
 		return c.newValidationError("oauth2_authorization_server.local must be empty in proxy mode")
 	}
 
@@ -525,6 +551,9 @@ func (c *OAuth2AuthServerConfig) validateLocalMode() error {
 	if err := c.validateLocalSigningKeys(); err != nil {
 		return err
 	}
+	if err := c.validateClientSecretHashing(); err != nil {
+		return err
+	}
 
 	if err := c.validateCIMDCache(); err != nil {
 		return err
@@ -551,6 +580,9 @@ func (c *OAuth2AuthServerConfig) validateHybridMode() error {
 	}
 	c.applySharedDefaults([]string{"authorization_code", "client_credentials", "refresh_token"})
 	if err := c.validateLocalSigningKeys(); err != nil {
+		return err
+	}
+	if err := c.validateClientSecretHashing(); err != nil {
 		return err
 	}
 	if err := c.validateCIMDCache(); err != nil {
@@ -593,6 +625,9 @@ func (c *OAuth2AuthServerConfig) applyLocalDefaults() {
 	if c.Local.SigningKeys.BootstrapTimeout == 0 {
 		c.Local.SigningKeys.BootstrapTimeout = DefaultSigningKeyBootstrapTimeout
 	}
+	if c.Local.ClientSecretHashing.MaxConcurrent == 0 {
+		c.Local.ClientSecretHashing.MaxConcurrent = DefaultClientSecretHashingMaxConcurrent
+	}
 }
 
 func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
@@ -605,6 +640,13 @@ func (c *OAuth2AuthServerConfig) validateRefreshTokenTTL() error {
 func (c *OAuth2AuthServerConfig) validateLocalSigningKeys() error {
 	if c.Local.SigningKeys.BootstrapTimeout <= 0 {
 		return c.newValidationError("oauth2_authorization_server.local.signing_keys.bootstrap_timeout must be a positive duration")
+	}
+	return nil
+}
+
+func (c *OAuth2AuthServerConfig) validateClientSecretHashing() error {
+	if c.Local.ClientSecretHashing.MaxConcurrent <= 0 {
+		return c.newValidationError("oauth2_authorization_server.local.client_secret_hashing.max_concurrent must be a positive integer")
 	}
 	return nil
 }
@@ -623,6 +665,22 @@ func (c *OAuth2AuthServerConfig) applySharedDefaults(defaultGrantTypes []string)
 func (c *OAuth2AuthServerConfig) validateCIMDCache() error {
 	if c.CIMD.Enabled && c.CIMD.Cache.MinTTL > c.CIMD.Cache.MaxTTL {
 		return c.newValidationError("oauth2_authorization_server.cimd.cache.min_ttl must not exceed max_ttl")
+	}
+	if !c.CIMD.Enabled {
+		return nil
+	}
+	auth := c.CIMD.ClientAuthentication
+	if auth.KeySetCacheTTL <= 0 || auth.KeySetCacheTTL > 24*time.Hour {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_cache_ttl must be positive and not exceed 24h")
+	}
+	if auth.KeySetMinRefetchInterval <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_min_refetch_interval must be positive")
+	}
+	if auth.KeySetMaxBytes <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_max_bytes must be positive")
+	}
+	if auth.KeySetFetchTimeout <= 0 {
+		return c.newValidationError("oauth2_authorization_server.cimd.client_authentication.key_set_fetch_timeout must be positive")
 	}
 	return nil
 }
@@ -656,6 +714,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 			RefreshTokenTTL:        c.Local.RefreshTokenTTL,
 			TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 			SigningKeys:            c.Local.SigningKeys,
+			ClientSecretHashing:    c.Local.ClientSecretHashing,
 			SupportedResponseTypes: c.SupportedResponseTypes,
 			SupportedGrantTypes:    c.SupportedGrantTypes,
 			SupportedScopes:        c.SupportedScopes,
@@ -681,6 +740,7 @@ func (c *OAuth2AuthServerConfig) Resolve() (OAuth2ModeConfig, error) {
 				RefreshTokenTTL:        c.Local.RefreshTokenTTL,
 				TokenClaimsExpression:  c.Local.TokenClaimsExpression,
 				SigningKeys:            c.Local.SigningKeys,
+				ClientSecretHashing:    c.Local.ClientSecretHashing,
 				SupportedResponseTypes: c.SupportedResponseTypes,
 				SupportedGrantTypes:    c.SupportedGrantTypes,
 				SupportedScopes:        c.SupportedScopes,
@@ -812,6 +872,9 @@ type TrustedTokenIssuerConfig struct {
 type ClientAssertionTrustConfig struct {
 	IssuerURI string `mapstructure:"issuer_uri"`
 	JWKSURI   string `mapstructure:"jwks_uri"`
+	// ExpectedAudience is the aud claim required for client assertions. When empty,
+	// TokenExchangeConfig.ExpectedAudience is used for backward compatibility.
+	ExpectedAudience string `mapstructure:"expected_audience"`
 	// JWKS is an inline JWK Set; mutually exclusive with JWKSURI and JWKSFile.
 	JWKS string `mapstructure:"jwks"`
 	// JWKSFile is the absolute path of a JWK Set file inside Security.TrustMaterialDir.
@@ -825,7 +888,8 @@ type ClientAssertionTrustConfig struct {
 // for third-party OAuth2 tokens stored in the token vault.
 type TokenExchangeConfig struct {
 	// ExpectedAudience is the broker's own identifier that must appear in the audience (aud) claim
-	// of both subject_token and client_assertion JWTs submitted for token exchange.
+	// of subject_token JWTs. It is also the client_assertion fallback when no role-specific
+	// audience is configured.
 	// If empty, defaults to "token-exchange-broker".
 	// Configurable to support deployments where the broker is known under a different identifier.
 	// Environment variable: IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE

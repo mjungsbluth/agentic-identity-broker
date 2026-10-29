@@ -498,6 +498,15 @@ broker:
         extraBlockedCidrs: []
       # -- Keyword blocklist for CIMD client_name values (case-insensitive). Default: [].
       clientNameBlocklist: []
+      clientAuthentication:
+        # -- Maximum age of a cached client key set. Values above 24h are rejected at startup.
+        keySetCacheTtl: 1h
+        # -- Minimum time between key-set refetches for an unknown kid.
+        keySetMinRefetchInterval: 5m
+        # -- Maximum key-set response size in bytes.
+        keySetMaxBytes: 65536
+        # -- Timeout for key-set HTTP requests.
+        keySetFetchTimeout: 5s
 
     # Local token issuance configuration (local/hybrid mode)
     local:
@@ -508,6 +517,10 @@ broker:
       signingKeys:
         # -- Startup budget for signing-key bootstrap in local/hybrid mode. Defaults to 90s if empty.
         bootstrapTimeout: ""
+      clientSecretHashing:
+        # -- Client secret hashes that may run at once. Each Argon2id hash allocates 64 MiB and already uses
+        # up to four CPUs, so raising it adds memory, not throughput. Defaults to 2 if 0.
+        maxConcurrent: 0
 
     # RFC 8693 user impersonation (signed or unverified subject). Only valid in "local" mode.
     # Disabled by default (nil): the impersonation block is omitted from the rendered
@@ -815,6 +828,8 @@ sessionSweep:
   startingDeadlineSeconds: 3600
   # -- Hard cap on one Job, in seconds. Must exceed timeoutSeconds.
   activeDeadlineSeconds: 2100
+  # -- Retries of a failed Job. activeDeadlineSeconds covers all attempts.
+  backoffLimit: 0
   # -- Request timeout in seconds, passed to curl --max-time
   timeoutSeconds: 1800
   # -- ISO 8601 lookahead sent as lookahead_duration (days, hours, minutes, seconds only).

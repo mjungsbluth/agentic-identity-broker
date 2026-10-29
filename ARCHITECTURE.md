@@ -346,6 +346,8 @@ The builder composes one `App.Shutdown` function. It stops the local/hybrid `Ses
 
 Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
+**Service-specific session recovery ([ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
+
 #### 3.1.4. End-to-End Testing Architecture
 
 **Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
@@ -426,6 +428,7 @@ ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
 **Domain Model**:
 - **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), consumption tracking, and an exact server-derived tool matcher with editable parameter constraints.
 - **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, idempotency, and server-owned exact tool coverage.
+- **Permanent denial**: Blocks the exact tool for one principal-agent pair until revocation, independent of arguments and session. Both storage adapters clear parameter constraints. ExtProc enforces existing denials with constrained parameters as tool-wide blocks, ahead of approved records.
 
 **API Endpoints** (8 routes on end-user server):
 ```
@@ -457,6 +460,7 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 - **ApprovalSyncBroadcaster**: In-process fan-out with configurable coalesce window (default 1s). Subscribers register buffered channels; broadcast wakes all subscribers after coalesce delay.
 - **ApprovalSyncSubscriber**: One goroutine per broker instance holds a dedicated `pgx.Conn` for `LISTEN approval_sync`. On notification receipt, triggers broadcaster.
 - **Cross-Instance**: PostgreSQL `NOTIFY approval_sync` issued in the same transaction as `approval_sync_state.version` increment. All broker instances receive the notification and wake their local long-poll connections.
+- **ExtProc snapshot ordering**: The cache retains the highest version from global and principal-filtered reads, including empty snapshots. Older responses cannot replace decisions or extend global freshness. Principal-filtered reads leave the global polling ETag unchanged.
 
 **Components**:
 ```
@@ -564,6 +568,8 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 - `OAuth2TokenHandler` always exists; the builder injects `proxyTokenGrantStrategy`, `localGrantStrategy`, or `hybridTokenGrantStrategy` based on the selected mode.
 - When local issuance is part of the active mode (`local` or `hybrid`), the local strategies are backed by `internal/domain/oauth2server.Provider`, which contains all fosite-specific authorization-server logic.
 
+**Client secret hashing**: Each confidential client authentication and credential generation runs one Argon2id hash, which allocates 64 MiB. The builder creates one `Argon2Hasher` for the token endpoint and the credential service, so they share one limit of `local.client_secret_hashing.max_concurrent` hashes (default 2). Further requests wait for a free slot and stop waiting when the request ends. This bounds peak memory. Throughput depends on CPU, not on this limit.
+
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
 
 **Authorization-code exchange reads**: The provider authenticates the client once and passes it through the request context to fosite's storage handler. Each code-session hydration still reads the code and checks its original client ID and agent ID; invalidation retains its atomic single-use update. No authorization-code record is cached across validation steps, so replay and expiry checks observe current state.
@@ -602,7 +608,7 @@ End-User Server (Port 8000):
   └── POST /oauth2/token                                              (proxy, local, hybrid, and token-exchange flows)
 ```
 
-**Public JWK trust surfaces**: `/oauth2/jwks.json` publishes only mode-appropriate `token_signing` and upstream verification sources. It never publishes CIMD client-authentication keys. `/.well-known/oauth-client/{service-id}/jwks.json` publishes only public ES256 keys from `cimd_client_authentication`. It never publishes token-signing keys, upstream keys, private key material, or secrets.
+**Public JWK trust surfaces**: `/oauth2/jwks.json` publishes only mode-appropriate `token_signing` and upstream verification sources. It never publishes CIMD client-authentication keys. `/.well-known/oauth-client/{service-id}/jwks.json` publishes only public ES256 keys from `cimd_client_authentication` for a CIMD confidential service. A CIMD public service receives the uniform JSON `404` from that route, even if keys exist for other services. Neither JWK Set publishes unrelated keys, private material, or secrets.
 
 **Upstream JWKS bootstrap policy**: In `proxy` and `hybrid` modes the upstream JWKS remains required by the public `/oauth2/jwks.json` publisher and multi-agent upstream-token verification. The builder resolves upstream OAuth2 metadata at startup for those surfaces, so proxy/hybrid mode does not start with an unknown upstream verifier configuration. If that metadata discovery fails, startup fails. RFC 8693 client-assertion validation instead uses the dedicated `token_exchange.client_assertion.issuer_uri` trust anchor: it defaults to the proxy upstream in `proxy` and `hybrid` modes and works independently in `proxy`, `local`, and `hybrid` modes. A configured anchor without an explicit `jwks_uri` is discovered at startup; discovery or verifier initialization failure prevents startup. An explicit `jwks_uri` supports IdPs without discovery. After startup, upstream JWKS refresh failures return HTTP 503 from `/oauth2/jwks.json`, and client-assertion or other verification-dependent flows fail closed until their required JWKS source recovers.
 
@@ -779,7 +785,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - Protected-resource resolution leaves stored confidential secrets encrypted and filesystem/public/CIMD secrets absent. Token exchange uses only the provider ID and display name. Refresh retrieves the service through `ThirdpartyOAuth2ProviderService.Get()` and selects operation credentials in the session domain. Successful stored-secret decryption is logged at Info with structured fields.
 - No manual encryption steps required in calling code - encryption is transparent
 
-**Implemented credential sources and operation boundaries (feature 051, unreleased)**:
+**Implemented credential sources and operation boundaries (`051-oauth2-secret-file-overrides`, unreleased)**:
 
 **Approval, 2026-10-08**: The user explicitly selected “Accept ADR 038” and “Major contract bump to 2.0.0”. [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md) is Accepted. Source selection, file acquisition, identity checks, and both-store persistence are implemented. Historical design approval and semantic-red evidence remain in the [quickstart](specs/051-oauth2-secret-file-overrides/quickstart.md#status-and-prerequisites). This feature is unreleased. No registry publication or live deployment occurred.
 
@@ -787,7 +793,7 @@ The registered service owns `credential_source: stored | filesystem`. Creation o
 
 Filesystem mode requires a canonical ID and rejects either supplied inline credential field, including null or empty input. The service stores no file client ID or secret placeholder and uses `NewAbsentSecret()`. Administrative, consent, and session metadata operations never resolve files. Filesystem administrative responses omit both inline credentials and expose no paths or internal transition evidence.
 
-**Administrative API approval and versioning (feature 051)**:
+**Administrative API approval and versioning (`051-oauth2-secret-file-overrides`)**:
 
 Published release `v0.1.81` contains Admin API `1.0.0`. Its `Service` response requires `client_id`, so filesystem omission is a breaking contract change. Admin API `2.0.0` replaces that contract on the existing `/api/services` and `/api/services/{service-id}` routes. No versioned route, compatibility endpoint, shim, or alias is introduced. The OpenAPI contract version is separate from the broker release tag.
 
@@ -830,7 +836,7 @@ Legacy missing identity remains usable only for stored services whose transition
 
 Missing bindings and unusable required files fail closed without stored or last-known fallback. Source errors remain distinct from provider rejection and retain existing generic client-facing responses. Credential-free events identify service UUID, operation, outcome, and a closed reason. Successful selection does not prove provider acceptance.
 
-RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the sessions landing page as `error_uri` before provider authentication. Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
+RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the service-specific third-party authorization `error_uri` before provider authentication (ADR 044). Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
 
 Both stores preserve existing indexes, version checks, and atomic updates. PostgreSQL constraints represent absent filesystem credentials as SQL NULL. Existing migration 040 backfills stored/false service state and leaves legacy session identities NULL. Its guarded DOWN refuses filesystem rows, retained transition evidence, and other incompatible records. Compatible DOWN discards non-secret session identity associations.
 
@@ -935,11 +941,12 @@ OAuth2 /authorize request
   ↓  ├─ URL detected → AgentClientResolver (cimdService != nil)
   ↓  │    ↓ Validate URL (scheme, path, no credentials, no dot-segments, no wildcard, no literal or encoded path separators)
   ↓  │    ↓ AgentRepository.GetByClientURI → exact URI, then whole-segment URI pattern
-  ↓  │    ↓ CIMDService.FetchAndValidate(url, agent)
-  ↓  │         ↓ Cache hit? → return cached document
-  ↓  │         ↓ CIMDFetcher.Fetch (SSRF blocklist enforced at dial time)
-  ↓  │         ↓ Validate: client_id match, redirect_uris present, auth_method safe
-  ↓  │         ↓ Cache store with HTTP-header-derived TTL (clamped to operator bounds)
+  ↓  │    ↓ CIMDService.Resolve(url, agent)
+  ↓  │         ↓ Cache hit? → use cached document
+  ↓  │         ↓ Cache miss → CIMDFetcher.Fetch (SSRF blocklist enforced at dial time)
+  ↓  │         ↓ Validate: client_id match, redirect_uris present and permitted (FR-004a), auth_method safe
+  ↓  │         ↓ Agent allowlist: every private-use redirect_uri must be in Agent.redirect_uris (hit or miss)
+  ↓  │         ↓ Cache store on miss with HTTP-header-derived TTL (clamped to operator bounds)
   ↓  │    ↓ Return ClientResolution{Agent, CIMDDocument}
 
   ↓  └─ UUID detected → AgentClientResolver (opaque path, cimdService may be nil)
@@ -955,29 +962,29 @@ OAuth2 /authorize request
 
 **CIMD bypass configuration**: The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`. This check runs before application initialization, even when CIMD is disabled. The flag disables both the dial-time IP blocklist and TLS certificate verification for local CIMD mock testing. The startup configuration summary reports its effective value and source for configuration audits.
 
-**Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
+**Redirect URI Matching**: `urivalidation.IsRegisteredRedirectURI` (`internal/domain/urivalidation/redirect.go`) decides registration. For CIMD clients, the client list comes from the fetched document. Otherwise, it comes from the Agent's `redirect_uris`. Web URIs retain `MatchesRedirectURI` behavior: loopback HTTP ports are ignored, while every other component must match exactly. A private-use URI must pass `IsValidPrivateUseRedirectURI` and equal an entry in both the client list and the Agent's `redirect_uris` byte for byte. A CIMD document alone cannot enable a custom-scheme callback (ADR 042).
 
-**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations. The CIMD timeout, response limit, cache, and validation rules remain unchanged.
+**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations. That relocation leaves the timeout, response limit, and cache policy unchanged. [ADR 042](adrs/042-agent-allowlisted-private-use-redirect-uris.md) defines the private-use redirect exception and Agent allowlist.
 
 #### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
 
-**Purpose**: Authenticate the broker to a third-party OAuth2 token endpoint for a CIMD confidential service. This outbound client-authentication feature does not change **inbound CIMD client resolution**, where the broker fetches and validates an agent's client metadata document before authorization.
+**Purpose**: Identify the broker as a hosted client of a third-party OAuth2 service, with or without token-endpoint authentication. CIMD confidential uses `private_key_jwt`; CIMD public explicitly uses `none`. This outbound feature does not change inbound CIMD client resolution.
 
-**Service modes**: Manual and discovery-backed third-party OAuth2 services use these token-endpoint authentication methods:
+**Service modes**: `client_registration` independently selects `static` (operator client identity) or `cimd` (broker-hosted client identifier URL). Token-endpoint authentication selects a shared secret, `none`, or a signed assertion. The four valid manual combinations and discovery-backed methods are:
 
-| `token_endpoint_auth_method` | Eligible service | Token endpoint credential |
-|---|---|---|
-| Omitted or `null` | Manual static confidential | Operator-supplied client ID and encrypted shared secret with automatic authentication-style detection |
-| `none` | Manual public or public DCR | Client ID and no client credential with PKCE S256 on authorization-code flows |
-| `private_key_jwt` | Manual or discovered hosted CIMD | Broker-hosted HTTPS client ID URL and a fresh ES256 client assertion |
-| `client_secret_basic` | Discovery-backed confidential DCR only | Provider-issued client ID and encrypted secret, sent by HTTP Basic only |
-| `client_secret_post` | Discovery-backed confidential DCR only | Provider-issued client ID and encrypted secret, sent in the form body only |
+| `client_registration` | `token_endpoint_auth_method` | Eligible service | Token endpoint credential |
+|---|---|---|---|
+| `static` | Omitted or `null` | Manual static confidential | Operator-supplied client ID and encrypted shared secret with automatic authentication-style detection |
+| `static` | `none` | Manual static public | Operator client ID, no credential, PKCE S256 |
+| `cimd` | `private_key_jwt` | Manual or discovered CIMD confidential | Broker-hosted HTTPS client ID URL and a fresh ES256 assertion |
+| `cimd` | `none` | Manual CIMD public only | Broker-hosted HTTPS client ID URL, no credential, PKCE S256 |
+| `static` | `client_secret_basic`, `client_secret_post`, or `none` | Discovery-backed DCR only | Provider-issued client ID and the discovered method; secrets are encrypted if present |
 
-`private_key_jwt` is confidential authentication. For hosted CIMD, the broker generates the stable client ID URL and stores no shared secret. A manual CIMD service request with a caller client ID or non-empty secret fails before provider traffic. Discovery-backed DCR pins its selected method for code exchange and refresh. It does not use authentication-style probing. This DCR-only extension supersedes ADR 036 decision 2. Manual confidential services retain their existing negotiated behavior.
+`private_key_jwt` remains recommended for CIMD because it authenticates the broker to the provider. CIMD public is an explicit per-service choice for providers that require `none`; the broker never infers it or selects it through protected-resource discovery. An omitted registration resolves to `cimd` only for `private_key_jwt` and to `static` otherwise. Requests with `static` plus `private_key_jwt`, or `cimd` plus an absent or null method, fail before provider traffic. Discovery-backed DCR pins its selected method without authentication-style probing. Manual confidential services retain their existing negotiated behavior.
 
 **Key-domain boundary (ADR 037)**: Each signing-key record has a required `key_domain`. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. The domains share encrypted storage and lifecycle mechanics, but each has separate selection, publication, and lifecycle operations. `kid` values are globally unique, and each domain has at most one active current key.
 
-CIMD client-authentication keys use ES256 only. Their private material uses a CIMD branch-key namespace and an encryption context with one `kid` subject. The token issuer uses only `token_signing`. `/oauth2/jwks.json` uses `token_signing` and mode-appropriate upstream sources. It never uses `cimd_client_authentication`. The CIMD metadata service, public JWK publisher, and assertion signer use only `cimd_client_authentication`.
+CIMD client-authentication keys use ES256 only. Their private material uses a CIMD branch-key namespace and an encryption context with one `kid` subject. The token issuer uses only `token_signing`. `/oauth2/jwks.json` uses `token_signing` and mode-appropriate upstream sources. It never uses `cimd_client_authentication`. Only CIMD confidential metadata, public JWK publication, and assertion signing depend on the CIMD key set. CIMD public metadata is keyless.
 
 On create and update, the broker provisions a service-scoped branch key before it stores the service configuration. This includes CIMD services without shared secrets. The token vault encrypts their session tokens with the service ID as authenticated context. The broker-global CIMD assertion key uses a separate `kid` subject.
 
@@ -995,17 +1002,23 @@ The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its 
 
 CIMD token refresh emits a credential-free token-acquisition audit record with the service ID, operation `refresh`, and outcome `rejected` on failure, including response-drain read errors and responses over the 1 MiB limit. Other client modes do not emit CIMD token-acquisition events.
 
-**Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
+CIMD public token acquisition follows the existing public-client session audit path (`public_client: true`). Service lifecycle records say `CIMD public service`. The existing `CIMD metadata access` event covers public document serving without a second record for the same request.
 
-An advertised CIMD key can remain pending during its activation grace period. Metadata and JWK routes require an effective signing key whose `kid` appears in the public JWK set. The set still includes pending and retained prior keys. A pending-only set produces JSON `404` responses.
+**Broker-hosted Client ID Metadata Document**: The anonymous metadata route returns a seven-member confidential document only when a usable published CIMD key exists. Its keyless CIMD public variant has exactly `client_id`, one callback URI in `redirect_uris`, `grant_types` (`authorization_code`, `refresh_token`), `response_types` (`code`), and `token_endpoint_auth_method: none`. It omits `jwks_uri` and `token_endpoint_auth_signing_alg`. Both successful documents use `200`, `application/json`, and `Cache-Control: public, max-age=300`. An unavailable document or public-mode JWK request returns the same JSON `404` without a redirect or partial data.
+
+An advertised CIMD key can remain pending during its activation grace period. Confidential metadata and JWK routes require an effective signing key whose `kid` appears in the public JWK set. The set includes pending and retained prior keys. A pending-only set produces JSON `404` for confidential requests. It does not block CIMD public metadata.
 
 The broker caches only the public CIMD JWK set for 45 seconds per process. Each read checks the database-backed key-set revision. A revision change rebuilds the set, so another replica sees a committed key removal on its next read. Concurrent rebuilds share one bounded operation. Revision or rebuild errors never return a stale set.
 
-**SC-008 normal load**: After one warm-up request per route, ten concurrent clients send 100 anonymous requests to each public metadata and CIMD JWK route. Each request must return `200 OK`. The p95 retrieval latency for each route, measured through reading and closing the response body, must be less than one second.
+**SC-008 normal load**: For an eligible CIMD confidential service, ten concurrent clients send 100 anonymous requests to each metadata and CIMD JWK route after one warm-up request per route. Each request must return `200 OK`. The p95 retrieval latency for each route, including reading and closing the response body, must be less than one second. CIMD public JWK requests intentionally return `404` and are not part of that baseline.
 
-**Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity before key bootstrap or route serving. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
+**Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity, including CIMD public, before key bootstrap or route serving. Only CIMD confidential services trigger key bootstrap and published-key readiness. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
 
-**See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md)
+PostgreSQL reads check stored client registration and authentication without repeating write-time discovery URL validation. An unsafe persisted discovery URL does not block service lists or startup. New writes validate that URL, and the guarded outbound client rejects unsafe destinations. Invalid stored client authentication reports the service ID. The startup check still rejects a CIMD client ID that differs from the configured public origin.
+
+**Identity switches and rollout**: A full replacement keeps the URL between CIMD methods. Static-to-CIMD assigns the hosted URL; CIMD-to-static requires an operator client ID and ends metadata serving. Provider caches can retain an old document for 300 seconds, and a provider can reject old refresh tokens after the client ID changes. During rollout after migration 044, pre-upgrade replicas fail closed on CIMD confidential creates and CIMD identity rewrites. Retry those writes after all replicas upgrade. See ADR 044 for the guarded rollback procedure.
+
+**See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) and [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md).
 
 #### 3.1.z.1. Protected-Resource Discovery and Dynamic Client Registration (Feature 050)
 
@@ -1093,7 +1106,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Name**: extproc-token-exchange
 
-**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming HTTP requests via Envoy's ExtProc filter, extracts Bearer tokens from request headers, performs RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication to optimize performance.
+**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. Agentgateway first validates the inbound JWT and sends its raw token and configured resource URI as trusted `aib.tokenexchange` metadata. ExtProc exchanges those values with the broker and replaces the downstream `Authorization` header on success. Exchanged tokens use an in-memory cache with singleflight deduplication.
 
 **Architecture**: Hexagonal (ports and adapters)
 
@@ -1146,28 +1159,21 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:
 
 - **Process RPC**: Streaming bidirectional RPC handling all Envoy ExtProc phases (RequestHeaders, RequestBody, ResponseHeaders, ResponseBody, RequestTrailers, ResponseTrailers)
-- **RequestHeaders Phase**: Primary processing phase where Bearer token extraction and exchange occurs
-- **Other Phases**: Pass-through responses with phase-specific response types
-- **ImmediateResponse**: Error response mechanism (500 on exchange failure, 503 on invalid URI)
+- **RequestHeaders Phase**: Validates exchange metadata and exchanges tokens before the request body is available
+- **Other Phases**: Pass-through responses with phase-specific response types; OPA evaluates buffered request bodies after a successful headers-phase exchange
+- **ImmediateResponse**: A non-transient broker exchange error with `error_uri` returns HTTP 403. The response has `WWW-Authenticate: Bearer error="insufficient_scope"` and the existing JSON-RPC `-32042` URL elicitation body (`id: null`). All protocols and OPA modes use this response. The challenge includes `error_description` and `error_uri` only when their bytes match RFC 6750 §3. Other exchange failures return 500, except expired assertions and open circuits, which return 503. Missing or invalid exchange metadata also returns 503. No failure mutates downstream `Authorization`.
 
 #### 3.2.3. Request Processing
 
 **RequestHeaders Processing**:
 
-1. Extract Bearer token from Authorization header (pass through if absent or non-Bearer)
-2. Extract resource URI from `:path` pseudo-header
-3. Validate URI (absolute, http/https scheme, non-empty host) — SSRF mitigation
-4. Call `Exchanger.Exchange()` with (token, uri)
-5. On success: replace Authorization header with `"Bearer " + exchangedToken`
-6. On failure: return 500 ImmediateResponse, reject request, log failure
+1. Read `subject_token` and `resource_uri` only from `aib.tokenexchange` metadata. Reject missing or invalid values without raw-header fallback.
+2. With OPA enabled, validate protocol metadata and MCP transport. For body-bearing requests, exchange before buffering the body. For header-only requests, allow OPA to decide before exchange.
+3. Call `Exchanger.Exchange()` with the validated metadata values.
+4. On success, replace `Authorization` with `Bearer <exchanged token>`.
+5. On a non-transient broker error with `error_uri`, return the 403 challenge from the request-headers phase. A client that supports MCP step-up can discover protected-resource metadata at `/.well-known/oauth-protected-resource/mcp` when the gateway serves that separate route.
 
-**Helper Functions**:
-
-- `extractBearerToken()`: Parse "Bearer <token>" format
-- `extractHeader()`: Case-insensitive header lookup
-- `validateResourceURI()`: URI parsing and scheme validation
-- `replaceAuthorizationHeader()`: Build HeadersResponse with header mutation
-- `immediateResponse()`: Build ImmediateResponse with status code and JSON body
+See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 023](specs/023-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.
 
 #### 3.2.4. Configuration
 
@@ -1366,6 +1372,8 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 044](adrs/044-service-specific-session-recovery-url.md) records the recovery decision.
+
 (List any third-party services or external APIs the system interacts with.)
 
 Service Name 1: [e.g., Stripe, SendGrid, Google Maps API]
@@ -1434,6 +1442,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 
 - [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
 - [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
+- [ADR 044: Service-Specific Session Recovery URL](adrs/044-service-specific-session-recovery-url.md) - Accepted. Recoverable RFC 8693 session errors link to the resolved service's third-party OAuth2 GET with an encoded same-origin `/sessions` return URI.
 
 ### Security & Encryption
 
@@ -1453,6 +1462,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 - [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
 - [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. ADR 040 extends decision 2 only for discovery-backed DCR.
 - [ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md) - Discovery, client selection, guarded HTTP, and status design. Supersedes only ADR 015's package locations and ADR 036 decision 2 for discovery-backed DCR clients.
+- [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md) - Accepted independent registration and four-mode service contract, keyless CIMD public document, and guarded persistence migration.
 
 ### Tool Approval
 - [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
@@ -1541,6 +1551,8 @@ Define any project-specific terms or acronyms.)
 
 **Canonical ID**: Optional case-sensitive administrative identifier for an Agent, ThirdpartyOAuth2Provider, or PermissionSet. It is a 1–128-character URL-safe, non-UUID token, unique only within its resource type. Canonical IDs are resolved at the administrative boundary and never replace UUID primary keys, foreign keys, JSONB references, or encryption contexts.
 
+**External ID**: An optional Agent identifier from an external governance system, such as a URN. It is not a Canonical ID or a Stable Identifier. Several Agents can share one External ID. The admin agent-list filter compares it exactly and returns zero or more Agents. The filter accepts 1–255 Unicode code points. The write contract does not change.
+
 **Stable Identifier**: The UUID primary key of a managed resource. It remains the `id` in every API representation and is the only identifier persisted in relationships; a canonical ID is optional metadata and a valid administrative input alias.
 
 **Agent**: An AI agent registered in the identity broker system. Each agent has a unique client_id (the `ClientID` field — a short opaque identifier used in existing OAuth2/consent flows via `GetByClientID`; optional in the Admin API, and when omitted there is no auto-generation fallback per ADR 017, so `client_id` remains NULL), display name, description, and optional URLs for governance documentation and user interface. Agents may additionally register one or more **client_uris** (Client ID Metadata Document URLs per IETF draft-parecki-oauth-client-id-metadata-document) which provide an alternative resolution path via `GetByClientURI` for CIMD-aware clients. The `client_id` remains the canonical primary identifier when present; client_uris are supplementary discovery handles that resolve to the same Agent entity. Agents request delegated OAuth2 permissions from users through the consent flow. Optionally, agents may specify service requirements (mandatory and optional third-party services with required scopes).
@@ -1553,7 +1565,7 @@ Define any project-specific terms or acronyms.)
 
 **Mandatory Service**: A third-party OAuth2 service marked with requirement_type="mandatory" in an agent's service requirements. Authorization flow validates that user has an active, non-expired OAuth2 session with all mandatory services and that session scopes are a superset of required_scopes (case-sensitive). If validation fails, user is redirected to consent screen to establish missing sessions before authorization continues.
 
-**Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization flow - if user lacks session or scopes, authorization proceeds anyway. Allows agents to degrade gracefully when optional integrations unavailable.
+**Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization while the user has not included it in their grant. Once the user includes it, it is required for that user: a missing or unusable session redirects authorization to the consent screen, where the user reconnects or deselects it ([Feature 019](specs/019-permission-sets/spec.md) FR-022). Allows agents to degrade gracefully when optional integrations are unavailable.
 
 **ThirdpartyOAuth2Provider**: An operator-managed third-party OAuth2 service with scopes, a display name, and one client identity. Static confidential providers in stored mode retain a client ID and an encrypted `Secret` value object. Eligible filesystem mode stores neither credential and acquires the current pair for each exchange or refresh attempt. A discovery-backed service also owns its configured resource URL, issuer, effective resource, client bootstrap method, and discovery status. A confidential DCR secret uses the existing `Secret` value object. Public and hosted CIMD services have no shared secret. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
 
@@ -1583,7 +1595,7 @@ Define any project-specific terms or acronyms.)
 
 **Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a filesystem, public, or CIMD confidential service without a stored secret. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
 
-The next five entries describe feature 051's implemented, unreleased model under [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md), accepted on 2026-10-08.
+The next five entries describe the implemented, unreleased model from `051-oauth2-secret-file-overrides` under [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md), accepted on 2026-10-08.
 
 **Credential source**: The service-owned choice of `stored` or `filesystem` credentials. The third-party domain validates it, and both stores persist it. Internal `credential_source_transitioned` starts false on creation/backfill, becomes true atomically on an actual transition, and never resets. It prevents legacy missing-identity reuse after a source round trip. No-op selections and metadata updates preserve it. The administrative API never exposes the marker.
 
@@ -1605,7 +1617,7 @@ The next five entries describe feature 051's implemented, unreleased model under
 
 **Grant Expiration**: The point at which a grant becomes inactive (valid_until < NOW()). Expired grants are filtered out when listing grants. Grants with valid_until=null never expire (indefinite grants). Users must specify future timestamps when creating grants.
 
-**Consent Flow**: The process where a user reviews agent metadata and available OAuth2 services, then decides which permissions to grant. Implemented via GET /api/consent/agent/:agent-id (view info) and POST /api/consent/agent/:agent-id/grants (grant permissions).
+**Consent Flow**: The process where a user reviews agent metadata and available OAuth2 services, then decides which permissions to grant. Implemented via GET /api/consent/agent/:agent-id (view info) and POST /api/consent/agent/:agent-id/grants (grant permissions). Authorization returns the user to this flow when the grant is missing or expired, or when a service included in the grant has no usable session.
 
 **Scope Validation**: Business rule (FR-018) enforcing that all requested scopes in a grant must exist in the corresponding service's scope configuration. Invalid scopes are rejected with a 400 error listing which scopes are not defined.
 
@@ -1683,11 +1695,12 @@ The next five entries describe feature 051's implemented, unreleased model under
 
 **PKCE**: Proof Key for Code Exchange (RFC 7636). Security extension for OAuth2 that prevents authorization code interception attacks. Uses code_verifier (random 32-128 byte secret, base64url-encoded) and code_challenge (SHA256 hash of verifier). Mandatory for all OAuth2 flows with no bypass allowed.
 
-**Upstream Client Authentication**: Third-party OAuth2 services use three explicit modes:
+**Upstream Client Authentication**: Four manual modes combine registration and token-endpoint authentication:
 
-- **Static confidential clients** leave `Endpoint.AuthStyle` at `AuthStyleAutoDetect` and keep the existing client-secret negotiation.
-- **Public clients** use an empty `ClientSecret` and pin `Endpoint.AuthStyle` to `AuthStyleInParams`. This sends `client_id` in the request body and sends no client credential.
-- **CIMD confidential services** use `private_key_jwt`, a broker-hosted client ID URL, and no shared secret. The broker uses the dedicated broker-global `cimd_client_authentication` key set.
+- **Static confidential services** leave `Endpoint.AuthStyle` at `AuthStyleAutoDetect` and keep existing client-secret negotiation.
+- **Static public services** use an operator client ID, empty `ClientSecret`, and `AuthStyleInParams`. They send no client credential.
+- **CIMD confidential services** use `private_key_jwt`, a broker-hosted client ID URL, and the broker-global `cimd_client_authentication` key set.
+- **CIMD public services** use the hosted URL, empty `ClientSecret`, and `AuthStyleInParams`. They send no client credential or assertion and require no CIMD key.
 
 For a CIMD confidential service, code exchange uses `AuthStyleInParams`, an empty `ClientSecret`, and one fresh JWT-bearer assertion pair inside the retry loop. Refresh uses the manual form post with one fresh assertion pair. The assertion uses ES256, an advertised `kid`, and the exact client ID URL for `iss` and `sub`. Its sole audience is the configured token endpoint. It expires within five minutes and has a new `jti` for every request attempt. The broker never sends a shared secret or HTTP Basic credential for this mode. A metadata, key, assertion, or provider-validation error fails closed without fallback to public or static authentication.
 
@@ -1706,6 +1719,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
+
+**Session Recovery URL**: Broker-built RFC 8693 `error_uri` for a recoverable `UserSession`. The resolved `ThirdpartyOAuth2Service` ID selects the authorization route; configured `PublicURL` supplies the origin and encoded `/sessions` return URI. The route starts `OAuth2SessionService` authorization with PKCE. It is separate from the broker authorization server's `/oauth2/authorize` and from grant consent links.
 
 **AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
 
@@ -1797,6 +1812,8 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **AuthorizationCode**: Ephemeral, single-use code issued by the authorization endpoint and exchanged for an access token. Stored as SHA-256 hash. Expires after 60 seconds. Invalidated atomically on first use via `UPDATE ... SET used_at WHERE used_at IS NULL`. PKCE (S256) always required. Located in `internal/domain/storage/authorization_code.go`.
 
+**PrivateUseRedirectURI**: A native-app redirect URI with a private-use scheme (RFC 8252 §7.1), such as `com.example.app:/oauth2redirect/example-provider` or `github-app://oauth/callback`. `urivalidation.IsValidPrivateUseRedirectURI` enforces R1–R6: a restricted ASCII character set, canonical form, no opaque URI or userinfo, a safe scheme, a valid single-slash path or lowercase authority, and no dot path segments. Only an Agent's `redirect_uris` can authorize it; a CIMD client also needs the URI in its document. Match it byte for byte (ADR 042).
+
 **ClientID** (credential): String-typed identifier for broker-issued OAuth2 client credentials. Always equals the agent's UUID string. Globally unique. Bound to authorization codes for rotation safety. Located in `internal/domain/id/string_ids.go`.
 
 **KeyID**: String-typed identifier for JWT signing keys (`kid` claim). UUID format, immutable after creation. Used in JWT headers to identify the signing key for token validation. Located in `internal/domain/id/string_ids.go`.
@@ -1847,7 +1864,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 ### Inbound Client ID Metadata Document (CIMD) Domain
 
-**ClientIDMetadataDocument**: Immutable value object representing a parsed and validated CIMD JSON document fetched from a client's registered HTTPS URL. Validated at construction time: `client_id` field must exactly match the fetch URL, `redirect_uris` must not be empty, `token_endpoint_auth_method` must not be a client-secret variant, and `client_name` must not match the keyword blocklist. Located in `internal/domain/oauth2/cimd/`.
+**ClientIDMetadataDocument**: Immutable value object representing a parsed CIMD JSON document fetched from a client's registered HTTPS URL. At construction, `client_id` must match the fetch URL, `redirect_uris` must not be empty, `token_endpoint_auth_method` must not use a client secret, and `client_name` must not match the keyword blocklist. Each redirect URI must be same-origin HTTPS, loopback, or a structurally valid private-use URI. `ValidatePrivateUseRedirectURIs` checks private-use entries against the resolved Agent's `redirect_uris` on every resolution, including cache hits. Located in `internal/domain/oauth2/cimd/`.
 
 **CIMDCacheEntry**: In-process (non-persisted) cache record keyed by the Client ID Metadata Document URL. Fields: URL (cache key), parsed Document, FetchedAt timestamp, ExpiresAt (computed from HTTP cache headers clamped to operator TTL bounds). Stored in a `sync.RWMutex`-protected map; expired entries are lazily evicted on next access. Located in `internal/domain/oauth2/cimd/`.
 
@@ -1873,11 +1890,17 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 ### Outbound CIMD Client-Authentication Domain
 
-**CIMD confidential service**: A third-party OAuth2 service that uses `private_key_jwt`. It has a broker-hosted HTTPS client ID URL and no shared secret.
+**CIMD confidential service**: A third-party OAuth2 service with `client_registration: cimd` and `token_endpoint_auth_method: private_key_jwt`. It has a broker-hosted HTTPS client identifier URL and no shared secret. Its assertion depends on the CIMD client-authentication key set.
+
+**Client registration**: The service setting `client_registration` selects who supplies its client ID. `static` uses an operator or DCR-issued ID. `cimd` uses a broker-hosted URL. Token-endpoint authentication remains a separate choice.
+
+**Static public service**: A `static` service with `token_endpoint_auth_method: none`. It keeps its operator client ID and has no hosted document or client credential.
+
+**CIMD public service**: A `cimd` service with `token_endpoint_auth_method: none`. It uses the hosted URL and PKCE S256 without a client credential or CIMD client-authentication key.
 
 **CIMD client-authentication key**: A broker-global ES256 key in the `cimd_client_authentication` key domain. It signs outbound client assertions only. Its public JWK appears only through a CIMD service JWK route.
 
-**Broker-hosted Client ID Metadata Document**: The public document at a CIMD confidential service's client ID URL. It identifies the broker client, its callback URI, `private_key_jwt`, ES256, and its CIMD JWK URL. It never contains private material, secrets, user data, or token data.
+**Broker-hosted Client ID Metadata Document**: The public document at a CIMD service's client identifier URL. Both variants bind the broker URL, one callback, and the selected authentication method. The confidential variant also publishes `ES256` and a public JWK URL. The public variant omits both key members and needs no CIMD key. Neither variant contains private material, secrets, user data, or tokens.
 
 **Client assertion**: An ephemeral ES256 JWT that authenticates the broker to one configured third-party token endpoint. It uses a CIMD client-authentication key. It is distinct from the RFC 8693 `ClientAssertion` that authenticates a privileged token-exchange client.
 

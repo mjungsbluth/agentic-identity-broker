@@ -328,6 +328,8 @@ func TestTokenExchangeExpectedAudienceConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "token-exchange-broker", cfg.TokenExchange.ExpectedAudience,
 			"expected_audience should default to token-exchange-broker via Viper SetDefault")
+		assert.Empty(t, cfg.TokenExchange.ClientAssertion.ExpectedAudience,
+			"client assertion audience should inherit the token exchange audience when omitted")
 	})
 
 	t.Run("expected_audience is overridden by environment variable", func(t *testing.T) {
@@ -341,6 +343,19 @@ func TestTokenExchangeExpectedAudienceConfiguration(t *testing.T) {
 		assert.Equal(t, "my-custom-gateway-audience", cfg.TokenExchange.ExpectedAudience,
 			"expected_audience should be overridden by IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE env var")
 	})
+
+	t.Run("client assertion expected_audience is overridden independently", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE", "subject-token-audience")
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE", "client-assertion-audience")
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, "subject-token-audience", cfg.TokenExchange.ExpectedAudience)
+		assert.Equal(t, "client-assertion-audience", cfg.TokenExchange.ClientAssertion.ExpectedAudience)
+	})
 }
 
 func TestSigningKeyBootstrapTimeoutConfiguration(t *testing.T) {
@@ -353,6 +368,58 @@ func TestSigningKeyBootstrapTimeoutConfiguration(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, 37*time.Second, cfg.OAuth2AuthServer.Local.SigningKeys.BootstrapTimeout)
+	})
+}
+
+func TestClientSecretHashingConfiguration(t *testing.T) {
+	t.Run("max_concurrent defaults to 2", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, cfg.OAuth2AuthServer.Local.ClientSecretHashing.MaxConcurrent)
+	})
+
+	t.Run("max_concurrent is overridden by environment variable", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT", "5")
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, 5, cfg.OAuth2AuthServer.Local.ClientSecretHashing.MaxConcurrent)
+	})
+}
+
+func TestCIMDClientAuthenticationConfiguration(t *testing.T) {
+	t.Run("defaults are loaded", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		auth := cfg.OAuth2AuthServer.CIMD.ClientAuthentication
+		assert.Equal(t, time.Hour, auth.KeySetCacheTTL)
+		assert.Equal(t, 5*time.Minute, auth.KeySetMinRefetchInterval)
+		assert.Equal(t, 65536, auth.KeySetMaxBytes)
+		assert.Equal(t, 5*time.Second, auth.KeySetFetchTimeout)
+	})
+
+	t.Run("environment variables override defaults", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_CACHE_TTL", "2h")
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MIN_REFETCH_INTERVAL", "7m")
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MAX_BYTES", "32768")
+		t.Setenv("IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_FETCH_TIMEOUT", "3s")
+
+		cfg, err := NewLoader().GetConfig(context.Background())
+		require.NoError(t, err)
+		auth := cfg.OAuth2AuthServer.CIMD.ClientAuthentication
+		assert.Equal(t, 2*time.Hour, auth.KeySetCacheTTL)
+		assert.Equal(t, 7*time.Minute, auth.KeySetMinRefetchInterval)
+		assert.Equal(t, 32768, auth.KeySetMaxBytes)
+		assert.Equal(t, 3*time.Second, auth.KeySetFetchTimeout)
 	})
 }
 

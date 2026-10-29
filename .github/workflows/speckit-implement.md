@@ -11,6 +11,9 @@ on:
       pr:
         type: number
         required: true
+      comment:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
@@ -25,6 +28,8 @@ permissions:
   issues: read
   pull-requests: read
 safe-outputs:
+  report-failure-as-issue:
+    - "!report_incomplete"
   threat-detection:
     continue-on-error: false
   push-to-pull-request-branch:
@@ -52,10 +57,10 @@ safe-outputs:
       - "justfile"
       - "Dockerfile*"
       - "ARCHITECTURE.md"
+      - "AGENTS.md"
+      - "**/AGENTS.md"
       - ".gitignore"
       - ".dockerignore"
-    excluded-files:
-      - "**/AGENTS.md"
     protected-files: request-review
     fallback-as-pull-request: false
   add-comment:
@@ -65,3 +70,5 @@ safe-outputs:
 ---
 
 Require `context.phase` to be `implement`. Do not run any other phase.
+Update `AGENTS.md` files when a task requires it, such as the ADR index,
+glossary, or area guidance, and limit those edits to what the feature adds.

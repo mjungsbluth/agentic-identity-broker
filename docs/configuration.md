@@ -1190,6 +1190,42 @@ For compliance and troubleshooting, read the JSON audit log. It is the first sta
 ```
 
 ### OAuth2 Authorization Server Configuration
+
+### CIMD
+
+**Description:** Controls Client ID Metadata Document fetching and validation in local and hybrid modes. CIMD is disabled by default. Every setting is optional.
+
+| Parameter | Type | Default | Required | Env var | Description |
+|-----------|------|---------|----------|---------|-------------|
+| `oauth2_authorization_server.cimd.enabled` | boolean | `false` | No | `IDENTITY_BROKER_CIMD_ENABLED` | Enable URL-based client IDs from pre-registered HTTPS metadata URLs. |
+| `oauth2_authorization_server.cimd.fetch_timeout` | duration | `1s` | No | `IDENTITY_BROKER_CIMD_FETCH_TIMEOUT` | Timeout for fetching client metadata documents. |
+| `oauth2_authorization_server.cimd.max_response_bytes` | integer | `5120` | No | `IDENTITY_BROKER_CIMD_MAX_RESPONSE_BYTES` | Maximum metadata document response size. |
+| `oauth2_authorization_server.cimd.cache.max_ttl` | duration | `1h` | No | `IDENTITY_BROKER_CIMD_CACHE_MAX_TTL` | Maximum cache lifetime for metadata documents. |
+| `oauth2_authorization_server.cimd.cache.min_ttl` | duration | `60s` | No | `IDENTITY_BROKER_CIMD_CACHE_MIN_TTL` | Minimum cache lifetime for metadata documents. |
+| `oauth2_authorization_server.cimd.cache.max_entries` | integer | `1000` | No | `IDENTITY_BROKER_CIMD_CACHE_MAX_ENTRIES` | Maximum number of cached metadata documents. |
+| `oauth2_authorization_server.cimd.ssrf.extra_blocked_cidrs` | string list | `[]` | No | `IDENTITY_BROKER_CIMD_SSRF_EXTRA_BLOCKED_CIDRS` | Additional IP ranges blocked during metadata fetches. Built-in blocked ranges remain active. |
+| `oauth2_authorization_server.cimd.client_name_blocklist` | string list | `[]` | No | `IDENTITY_BROKER_CIMD_CLIENT_NAME_BLOCKLIST` | Additional case-insensitive blocked client-name terms. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_cache_ttl` | duration | `1h` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_CACHE_TTL` | Maximum age of a cached public key set. Values above `24h` are rejected at startup. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_min_refetch_interval` | duration | `5m` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MIN_REFETCH_INTERVAL` | Minimum interval between key-set refetches for an unknown `kid`. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_max_bytes` | integer | `65536` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MAX_BYTES` | Maximum response size for a remote key set. |
+| `oauth2_authorization_server.cimd.client_authentication.key_set_fetch_timeout` | duration | `5s` | No | `IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_FETCH_TIMEOUT` | Timeout for fetching a remote key set. |
+
+**Example:**
+
+```yaml
+oauth2_authorization_server:
+  mode: local
+  cimd:
+    enabled: true
+    client_authentication:
+      key_set_cache_ttl: 1h
+      key_set_min_refetch_interval: 5m
+      key_set_max_bytes: 65536
+      key_set_fetch_timeout: 5s
+```
+
+See [`examples/config/cimd.yaml`](../examples/config/cimd.yaml) for the full annotated example.
+
 #### oauth2_authorization_server.multi_agent_client
 
 **Description:** Controls whether multiple agents share one upstream OAuth2 `client_id`.
@@ -1264,6 +1300,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 | Option | Type | Default | Required? | Environment Variable | Rules |
 |--------|------|---------|-----------|----------------------|-------|
 | `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange or explicit key sources in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
+| `token_exchange.client_assertion.expected_audience` | string | `token_exchange.expected_audience` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE` | Audience required only for client assertions. When omitted, the shared token-exchange audience is retained for backward compatibility; subject tokens in third-party token exchange use `token_exchange.expected_audience`. Impersonation subject credentials use the applicable rule audience or no audience in unverified mode. |
 | `token_exchange.client_assertion.jwks_uri` | string | Discovered from `issuer_uri` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI` | Explicit external IdP JWKS endpoint. Set this when the IdP does not support OAuth/OIDC discovery. |
 | `token_exchange.client_assertion.jwks` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` | Inline JWK Set JSON, as an alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `token_exchange.client_assertion.jwks_file` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` | Absolute path of a JWK Set file inside `security.trust_material_dir`. Mutually exclusive with `jwks_uri` and `jwks`. |
@@ -1276,6 +1313,7 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 token_exchange:
   client_assertion:
     issuer_uri: "https://privileged-gateway-idp.example.com"
+    expected_audience: "https://broker.example.com/oauth2/token"
     # Optional when discovery is unavailable:
     # jwks_uri: "https://privileged-gateway-idp.example.com/keys"
     # jwks_min_refresh: "15m"
@@ -1485,6 +1523,7 @@ See `examples/config/trust-anchor-local-jwks.yaml` for a complete configuration 
 | `oauth2_authorization_server.local.token_ttl` | duration | `1h` | Go duration (e.g. `30m`, `2h`) | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL` | — | Validity period for locally issued JWT access tokens. |
 | `oauth2_authorization_server.local.token_claims_expression` | string | `""` | CEL expression | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION` | — | CEL expression to inject custom claims into issued JWTs. |
 | `oauth2_authorization_server.local.signing_keys.bootstrap_timeout` | duration | `90s` | Positive duration | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT` | — | Startup budget for signing-key bootstrap in local/hybrid mode. Covers advisory locking, key generation, encryption, and persistence. |
+| `oauth2_authorization_server.local.client_secret_hashing.max_concurrent` | int | `2` | Positive integer | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT` | — | Client secret hashes that may run at once in local/hybrid mode. Each Argon2id hash allocates 64 MiB, and further requests wait for a free slot. Plan about 128 MiB of container memory per slot. Each hash already uses up to four CPUs, so more slots add memory, not throughput. |
 
 **Required**: `oauth2_authorization_server.mode` is mandatory — the broker rejects startup when the block is absent or `mode` is empty or invalid. Set `mode` to `proxy`, `local`, or `hybrid` before deploying.
 

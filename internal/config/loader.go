@@ -273,6 +273,7 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_ttl"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "token_claims_expression"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "signing_keys", "bootstrap_timeout"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "local", "client_secret_hashing", "max_concurrent"), "IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT")
 
 	// Set CIMD configuration defaults
 	cimdDefaults := ports.DefaultCIMDConfig()
@@ -282,6 +283,10 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_ttl"), cimdDefaults.Cache.MaxTTL)
 	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "min_ttl"), cimdDefaults.Cache.MinTTL)
 	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_entries"), cimdDefaults.Cache.MaxEntries)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_cache_ttl"), cimdDefaults.ClientAuthentication.KeySetCacheTTL)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_min_refetch_interval"), cimdDefaults.ClientAuthentication.KeySetMinRefetchInterval)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_max_bytes"), cimdDefaults.ClientAuthentication.KeySetMaxBytes)
+	l.v.SetDefault(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_fetch_timeout"), cimdDefaults.ClientAuthentication.KeySetFetchTimeout)
 
 	// Bind CIMD env vars
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "enabled"), "IDENTITY_BROKER_CIMD_ENABLED")
@@ -290,6 +295,10 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_ttl"), "IDENTITY_BROKER_CIMD_CACHE_MAX_TTL")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "min_ttl"), "IDENTITY_BROKER_CIMD_CACHE_MIN_TTL")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "cache", "max_entries"), "IDENTITY_BROKER_CIMD_CACHE_MAX_ENTRIES")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_cache_ttl"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_CACHE_TTL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_min_refetch_interval"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MIN_REFETCH_INTERVAL")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_max_bytes"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_MAX_BYTES")
+	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_authentication", "key_set_fetch_timeout"), "IDENTITY_BROKER_CIMD_CLIENT_AUTHENTICATION_KEY_SET_FETCH_TIMEOUT")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "ssrf", "extra_blocked_cidrs"), "IDENTITY_BROKER_CIMD_SSRF_EXTRA_BLOCKED_CIDRS")
 	_ = l.v.BindEnv(configutil.Key("oauth2_authorization_server", "cimd", "client_name_blocklist"), "IDENTITY_BROKER_CIMD_CLIENT_NAME_BLOCKLIST")
 
@@ -299,6 +308,7 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("token_exchange", "expected_audience"), tokenexchange.DefaultBrokerAudience)
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "issuer_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI")
+	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "expected_audience"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_uri"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS")
 	_ = l.v.BindEnv(configutil.Key("token_exchange", "client_assertion", "jwks_file"), "IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE")

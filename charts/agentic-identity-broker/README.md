@@ -219,6 +219,11 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.oauth2AuthorizationServer.local.tokenTtl` | Access token validity period (required in local/hybrid mode) | `""` |
 | `broker.oauth2AuthorizationServer.local.tokenClaimsExpression` | CEL expression for custom JWT claims | `""` |
 | `broker.oauth2AuthorizationServer.local.signingKeys.bootstrapTimeout` | Startup budget for signing-key bootstrap coordination | `""` |
+| `broker.oauth2AuthorizationServer.local.clientSecretHashing.maxConcurrent` | Client secret hashes that may run at once; each allocates 64 MiB and already uses up to four CPUs, so raising it adds memory, not throughput (0 = use application default of 2) | `0` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetCacheTtl` | Maximum cached key-set age; values above 24h are rejected | `1h` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMinRefetchInterval` | Minimum interval between refetches for an unknown key ID | `5m` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMaxBytes` | Maximum key-set response size in bytes | `65536` |
+| `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetFetchTimeout` | Key-set HTTP request timeout | `5s` |
 | `broker.oauth2AuthorizationServer.impersonation` | RFC 8693 user impersonation (signed or unverified subject). Only valid in `local` mode. Omitted when unset. Subtree keys use the broker config's snake_case names (`audience_prefix`, `rules[].{name,roles,trusted_issuers,authorization}`). `audience_prefix` is routing-only: a request appends one target agent's canonical lower-case UUID or `canonical_id`, both resolving to the same registered target; its UUID supplies minted `agent_id` and local-policy `agent.*`; local `tokenClaimsExpression` alone controls emitted `aud`. | _unset_ |
 | `broker.tokenExchange.clientAssertion.issuerUri` | External IdP issuer for privileged-gateway client assertions. Required in local mode when token exchange, approval authentication, or any client-assertion key source is configured; empty defaults to the proxy upstream issuer in proxy/hybrid mode. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
@@ -496,6 +501,7 @@ The chart only sends the request. It has no identity model of its own: you suppl
 | `sessionSweep.timeZone` | Optional IANA time zone | `""` |
 | `sessionSweep.startingDeadlineSeconds` | Late-start window before a run is skipped | `3600` |
 | `sessionSweep.activeDeadlineSeconds` | Hard cap on one Job; must exceed `timeoutSeconds` | `2100` |
+| `sessionSweep.backoffLimit` | Retries of a failed Job; `activeDeadlineSeconds` covers all attempts | `0` |
 | `sessionSweep.timeoutSeconds` | Request timeout | `1800` |
 | `sessionSweep.lookaheadDuration` | ISO 8601 lookahead (days, hours, minutes, seconds). Cover one interval plus a missed run; stay shorter than the shortest provider access-token lifetime | `PT2H` |
 | `sessionSweep.dryRun` | Classify candidates without refreshing | `false` |
@@ -510,7 +516,7 @@ The chart only sends the request. It has no identity model of its own: you suppl
 | `sessionSweep.resources` | Container resources | `50m` CPU, `64Mi` memory |
 | `sessionSweep.podLabels`, `sessionSweep.podAnnotations` | Extra pod metadata; `podLabels` override `commonLabels` | `{}` |
 
-The job never retries within a run (`backoffLimit: 0`) and never overlaps a running sweep (`concurrencyPolicy: Forbid`). It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. A missing header file fails the run before any request is sent; `curl` trims and escapes the value, so a malformed file cannot alter the request and fails with the target's status. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
+By default the job never retries a failed run (`backoffLimit: 0`), and it never overlaps a running sweep (`concurrencyPolicy: Forbid`). A rolling update of the broker can end a sweep in progress and fail the Job. Set `sessionSweep.backoffLimit: 1` to retry it; the retry evaluates only the sessions that are still due. It succeeds on any `2xx` response, including one with `failed` greater than zero, and prints the response summary. Any other status, a timeout, or an unreachable target fails the Job. `curl` reads each header file itself at run time, so its value never appears in the manifest, a process argument list, the environment, or the log. A missing header file fails the run before any request is sent; `curl` trims and escapes the value, so a malformed file cannot alter the request and fails with the target's status. The job pod carries `app.kubernetes.io/component: session-sweep` and never the broker's `app.kubernetes.io/name` label, so it cannot become a broker Service endpoint.
 
 ### Through the authenticating proxy with a projected ServiceAccount token
 

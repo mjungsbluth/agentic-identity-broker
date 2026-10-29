@@ -172,6 +172,7 @@ type Builder struct {
 	staticWebResourcesPath   string
 	tracerProvider           *sdktrace.TracerProvider   // Optional: custom TracerProvider for testing
 	cimdFetcher              ports.CIMDFetcher          // Optional: overrides auto-created CIMD fetcher for testing
+	cimdKeySetFetcher        ports.CIMDFetcher          // Optional: overrides auto-created CIMD key-set fetcher for testing
 	oauthDiscoveryClient     ports.OAuthDiscoveryClient // Optional: outbound discovery adapter for E2E
 	discoveryTokenHTTPClient *http.Client               // Optional: discovery-backed token requests only
 	jwksPublisher            ports.JWKSPublisherPort    // Optional: overrides JWKS publisher for testing
@@ -221,6 +222,12 @@ func (b *Builder) WithTracerProvider(tp *sdktrace.TracerProvider) *Builder {
 // Only effective when cimd.enabled is true.
 func (b *Builder) WithCIMDFetcher(f ports.CIMDFetcher) *Builder {
 	b.cimdFetcher = f
+	return b
+}
+
+// WithCIMDKeySetFetcher injects a custom CIMD key-set fetcher for testing.
+func (b *Builder) WithCIMDKeySetFetcher(f ports.CIMDFetcher) *Builder {
+	b.cimdKeySetFetcher = f
 	return b
 }
 
@@ -519,11 +526,11 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	}
 
 	if app.ProviderService != nil {
-		hasCIMDServices, err := app.ProviderService.HasCompatibleCIMDServices(context.Background())
+		requiresClientKey, err := app.ProviderService.VerifyCIMDServiceIdentities(context.Background())
 		if err != nil {
 			return nil, fmt.Errorf("validate persisted CIMD service identities: %w", err)
 		}
-		if hasCIMDServices {
+		if requiresClientKey {
 			if _, _, err := cimdKeyService.EnsureInitialKey(context.Background()); err != nil {
 				return nil, fmt.Errorf("initialize CIMD client-authentication key: %w", err)
 			}
@@ -599,6 +606,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	// Create OAuth2 service — mode-specific config drives all decisions.
 	var clientResolver ports.ClientResolver
+	var clientAssertionVerifier *oauth2server.ClientAssertionVerifier
 	{
 		oauth2Config := &oauth2service.OAuth2Config{
 			UpstreamAuthorizeEndpoint: ov.upstreamAuthorizeEndpoint,
@@ -646,6 +654,41 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			}
 			cimdSvc := domaincimd.NewService(activeFetcher, cimdCache, ov.cimdConfig.ClientNameBlocklist, b.logger)
 			clientResolver = oauth2service.NewAgentClientResolverWithCIMD(b.storage.Agents(), cimdSvc, b.logger)
+			keySetFetcher := b.cimdKeySetFetcher
+			if keySetFetcher == nil {
+				var concreteFetcher *outboundhttp.Fetcher
+				var fetchErr error
+				acceptedTypes := outboundhttp.WithAcceptedContentTypes("application/json", "application/jwk-set+json")
+				if b.config.Security.SkipCIMDSSRFValidation {
+					concreteFetcher, fetchErr = outboundhttp.NewFetcherInsecure(
+						ov.cimdConfig.ClientAuthentication.KeySetFetchTimeout,
+						int64(ov.cimdConfig.ClientAuthentication.KeySetMaxBytes),
+						acceptedTypes,
+					)
+				} else {
+					concreteFetcher, fetchErr = outboundhttp.NewFetcher(
+						ov.cimdConfig.ClientAuthentication.KeySetFetchTimeout,
+						int64(ov.cimdConfig.ClientAuthentication.KeySetMaxBytes),
+						ov.cimdConfig.SSRF.ExtraBlockedCIDRs,
+						acceptedTypes,
+					)
+				}
+				if fetchErr != nil {
+					return nil, fmt.Errorf("failed to create CIMD key-set fetcher: %w", fetchErr)
+				}
+				if b.config.Telemetry.Enabled && b.config.Telemetry.Traces.Enabled {
+					concreteFetcher.WrapTransport(telemetryhttp.NewTransport)
+				}
+				keySetFetcher = concreteFetcher
+			}
+			keySetService := domaincimd.NewClientKeySetService(keySetFetcher, ov.cimdConfig.ClientAuthentication, nil, b.logger)
+			clientAssertionVerifier = oauth2server.NewClientAssertionVerifier(
+				keySetService,
+				b.storage.ClientAssertionReplays(),
+				[]string{ov.localIssuerURI, ov.localIssuerURI + "/oauth2/token"},
+				nil,
+				b.logger,
+			)
 			b.logger.Info("CIMD client resolution enabled",
 				"fetch_timeout", ov.cimdConfig.FetchTimeout,
 				"max_response_bytes", ov.cimdConfig.MaxResponseBytes,
@@ -1010,19 +1053,21 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	// buildLocalProvider constructs the local token issuance infrastructure.
 	// Used in both "local" and "hybrid" modes.
-	buildLocalProvider := func(signingKeyService *oauth2server.SigningKeyService, tokenTTL time.Duration, claimsExpr string, bootstrapTimeout time.Duration) (*oauth2server.Provider, error) {
+	buildLocalProvider := func(signingKeyService *oauth2server.SigningKeyService, secretHasher *oauth2server.Argon2Hasher, tokenTTL time.Duration, claimsExpr string, bootstrapTimeout time.Duration) (*oauth2server.Provider, error) {
 		provider, err := oauth2server.NewProvider(
 			b.storage.AuthorizationCodes(),
 			b.storage.RefreshTokenSessions(),
 			b.storage.PKCESessions(),
 			b.storage.BrokerCredentials(),
 			clientResolver,
+			secretHasher,
 			signingKeyService,
 			localIssuerURI,
 			tokenTTL,
 			ov.localRefreshTokenTTL,
 			claimsExpr,
 			app.ConsentService,
+			clientAssertionVerifier,
 			b.logger,
 			b.storage,
 		)
@@ -1056,9 +1101,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	// wireLocalAdminHandlers constructs the local-mode admin services and handlers.
 	// Used in both "local" and "hybrid" modes.
-	wireLocalAdminHandlers := func() *oauth2server.SigningKeyService {
+	wireLocalAdminHandlers := func(secretHasher *oauth2server.Argon2Hasher) *oauth2server.SigningKeyService {
 		signingKeyService := oauth2server.NewSigningKeyService(signingKeyRepo, signingKeyBootstrapCoordinator, encryptor, app.BranchKeyManager, b.logger)
-		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, b.logger)
+		clientAuthService := oauth2server.NewClientAuthService(b.storage.BrokerCredentials(), clientResolver, secretHasher, b.logger)
 		credentialService := oauth2server.NewCredentialService(b.storage.Agents(), b.storage.BrokerCredentials(), b.storage.RefreshTokenSessions(), clientAuthService, b.logger)
 		app.AdminHandlers.ClientCredentials = admin.NewClientCredentialsHandler(credentialService, agentService, b.logger)
 		app.AdminHandlers.SigningKeys = admin.NewSigningKeysHandler(signingKeyService, b.logger)
@@ -1081,8 +1126,10 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 	switch cfg := oauthCfg.(type) {
 	case *ports.LocalOAuth2Config:
-		signingKeyService := wireLocalAdminHandlers()
-		provider, err := buildLocalProvider(signingKeyService, cfg.TokenTTL, cfg.TokenClaimsExpression, cfg.SigningKeys.BootstrapTimeout)
+		// One hasher for token requests and credential generation, so they share the limit.
+		secretHasher := oauth2server.NewArgon2Hasher(cfg.ClientSecretHashing.MaxConcurrent)
+		signingKeyService := wireLocalAdminHandlers(secretHasher)
+		provider, err := buildLocalProvider(signingKeyService, secretHasher, cfg.TokenTTL, cfg.TokenClaimsExpression, cfg.SigningKeys.BootstrapTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -1100,8 +1147,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		jwksPublisher = publisher
 		jwksHandler = enduserHandlers.NewJWKSHandler(publisher, b.logger)
 	case *ports.HybridOAuth2Config:
-		signingKeyService := wireLocalAdminHandlers()
-		provider, err := buildLocalProvider(signingKeyService, cfg.Local.TokenTTL, cfg.Local.TokenClaimsExpression, cfg.Local.SigningKeys.BootstrapTimeout)
+		secretHasher := oauth2server.NewArgon2Hasher(cfg.Local.ClientSecretHashing.MaxConcurrent)
+		signingKeyService := wireLocalAdminHandlers(secretHasher)
+		provider, err := buildLocalProvider(signingKeyService, secretHasher, cfg.Local.TokenTTL, cfg.Local.TokenClaimsExpression, cfg.Local.SigningKeys.BootstrapTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -1257,15 +1305,21 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		if brokerAudience == "" {
 			brokerAudience = tokenexchange.DefaultBrokerAudience
 		}
+		clientAssertionAudience := b.config.TokenExchange.ClientAssertion.ExpectedAudience
+		if clientAssertionAudience == "" {
+			clientAssertionAudience = brokerAudience
+		}
 
 		approvalJWTValidator, err = tokenexchange.NewJWTValidatorWithPolicies(
 			tokenexchange.JWTValidationPolicy{
-				JWKSProvider:    subjectTokenJWKSAdapter,
-				ExpectedIssuers: subjectTokenIssuers,
+				JWKSProvider:     subjectTokenJWKSAdapter,
+				ExpectedIssuers:  subjectTokenIssuers,
+				ExpectedAudience: brokerAudience,
 			},
 			tokenexchange.JWTValidationPolicy{
-				JWKSProvider:    clientAssertionJWKS,
-				ExpectedIssuers: []string{clientAssertionIssuerURI},
+				JWKSProvider:     clientAssertionJWKS,
+				ExpectedIssuers:  []string{clientAssertionIssuerURI},
+				ExpectedAudience: clientAssertionAudience,
 			},
 			brokerAudience,
 			tokenexchange.DefaultClockSkewTolerance,
@@ -1370,6 +1424,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			b.storage.AuthorizationCodes(),
 			b.storage.PKCESessions(),
 			b.storage.RefreshTokenSessions(),
+			b.storage.ClientAssertionReplays(),
 			b.logger,
 		)
 		cleanupCtx, cancelCleanup := context.WithCancel(context.Background())

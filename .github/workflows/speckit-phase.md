@@ -14,6 +14,9 @@ on:
       comment:
         type: number
         default: 0
+      review:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
@@ -23,6 +26,8 @@ permissions:
   issues: read
   pull-requests: read
 safe-outputs:
+  report-failure-as-issue:
+    - "!report_incomplete"
   threat-detection:
     continue-on-error: false
   push-to-pull-request-branch:

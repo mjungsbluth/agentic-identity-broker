@@ -24,7 +24,10 @@ import { Alert } from '@design-system/components/feedback/Alert';
 import { Button } from '@design-system/components/primitives/Button';
 import { PageTransition } from '@components/ui/PageTransition';
 import { useSessions } from '@hooks/useSessions';
-import { SessionCard } from '@components/sessions/SessionCard';
+import {
+  SessionCard,
+  sessionNeedsLogin,
+} from '@components/sessions/SessionCard';
 import { TerminationDialog } from '@components/sessions/TerminationDialog';
 import { sessionsApi } from '@services/api/sessions';
 import { extractApiError } from '@utils/api';
@@ -189,6 +192,11 @@ export const ThirdPartySessionsPage: React.FC = () => {
     setTerminationError(null);
   };
 
+  const handleLogin = (serviceId: string) => {
+    const redirectURI = `${window.location.origin}/sessions`;
+    window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
+  };
+
   const handleRefresh = async (serviceId: string) => {
     try {
       setRefreshingServiceIds((prev) => new Set(prev).add(serviceId));
@@ -201,12 +209,16 @@ export const ThirdPartySessionsPage: React.FC = () => {
       });
     } catch (err) {
       console.error('Failed to refresh session token', err);
+      const session = (await refetch()).find((s) => s.service_id === serviceId);
       setAlert({
         type: 'error',
-        message: extractApiError(
-          err,
-          'Failed to refresh session token. Please try again.',
-        ),
+        message:
+          session && sessionNeedsLogin(session)
+            ? `Your ${session.service_display_name} session can no longer be renewed. Log in to reconnect.`
+            : extractApiError(
+                err,
+                'Failed to refresh session token. Please try again.',
+              ),
       });
     } finally {
       setRefreshingServiceIds((prev) => {
@@ -398,6 +410,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
                   session={session}
                   onTerminate={handleTerminate}
                   onRefresh={handleRefresh}
+                  onLogin={handleLogin}
                   refreshing={refreshingServiceIds.has(session.service_id)}
                   loading={
                     terminatingLoading &&

@@ -116,6 +116,7 @@ type AgentRepository interface {
 	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
 	Delete(ctx context.Context, id id.AgentID) (bool, error)
 	List(ctx context.Context) ([]*storage.Agent, error)
+	ListByExternalID(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error)
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
 	// GetByClientURI resolves an exact CIMD URL first, then a URI pattern.
@@ -259,7 +260,7 @@ type UserSessionRepository interface {
 	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
-	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
+	// Used for FR-020 consent submission validation.
 	// Returns empty slice if no active sessions exist (not an error).
 	ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 
@@ -349,7 +350,7 @@ type ToolApprovalRepository interface {
 	// Approve transitions a pending approval to approved status with the user decision.
 	Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
 
-	// Deny transitions a pending approval to denied status.
+	// Deny transitions a pending approval to denied status, clearing parameter constraints for permanent denials.
 	Deny(ctx context.Context, id id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error)
 
 	// RevokePermanent atomically clears a permanent approval or denial.
@@ -508,5 +509,15 @@ type PKCESessionRepository interface {
 	Delete(ctx context.Context, signature string) error
 
 	// DeleteExpired removes PKCE sessions whose authorization codes have expired.
+	DeleteExpired(ctx context.Context) (int, error)
+}
+
+// ClientAssertionReplayRepository atomically consumes each CIMD client assertion jti once.
+type ClientAssertionReplayRepository interface {
+	// Consume inserts the client/jti pair until expiresAt. It must be atomic and must not join an ambient transaction.
+	// A previously consumed pair returns a conflict StorageError.
+	Consume(ctx context.Context, clientID, jti string, expiresAt time.Time) error
+
+	// DeleteExpired removes replay records whose retention period has elapsed.
 	DeleteExpired(ctx context.Context) (int, error)
 }
