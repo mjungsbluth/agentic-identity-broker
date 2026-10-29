@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,7 @@ const (
 	brokerTokenEndpoint    = "https://broker.example.com/oauth2/token"
 	agentgatewaySigningKID = "gateway-2026-09"
 	agentgatewayKeyPath    = "/etc/agentgateway/keys/gateway-signing.key"
+	agentgatewayJWKSPath   = "/etc/agentgateway/keys/broker-jwks.json"
 )
 
 type mcpAuthorizationKey struct{}
@@ -59,17 +61,17 @@ var _ = Describe("agentgateway oauthTokenExchange with an inline client-assertio
 			DeferCleanup(env.close)
 			gatewayKey := helpers.NewLocalRS256Key(agentgatewaySigningKID)
 			config := env.localConfig(ports.ClientAssertionTrustConfig{
-				IssuerURI: agentgatewayClientID,
-				JWKS:      helpers.PublicKeySet(gatewayKey),
+				IssuerURI:        agentgatewayClientID,
+				ExpectedAudience: brokerTokenEndpoint,
+				JWKS:             helpers.PublicKeySet(gatewayKey),
 			})
 			config.TokenExchange.Authorization.CEL.Expression = fmt.Sprintf("client_assertion.sub == %q", agentgatewayClientID)
-			config.TokenExchange.ExpectedAudience = brokerTokenEndpoint
-			config.OAuth2AuthServer.Local.TokenClaimsExpression = fmt.Sprintf(`{"agent_id": agent.id, "azp": agent.id, "aud": %q}`, brokerTokenEndpoint)
+			config.OAuth2AuthServer.Local.TokenClaimsExpression = fmt.Sprintf(`{"agent_id": agent.id, "azp": agent.id, "aud": %q}`, brokerAudience)
 			config.TokenExchange.ClaimExtraction.AgentIDExpression = "has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp)"
 			env.start(config)
 
 			mcpPort := startAuthorizationDigestMCPServer()
-			agentgatewayURL = startAgentgatewayWithTokenExchange(ctx, hostPort(env.enduserServer.BaseURL()), mcpPort, gatewayKey)
+			agentgatewayURL = startAgentgatewayWithTokenExchange(ctx, env.enduserServer.BaseURL(), mcpPort, gatewayKey)
 		}, NodeTimeout(5*time.Minute))
 
 		// US1-S2 from specs/052-inline-jwks-trust-anchors/spec.md
@@ -118,12 +120,23 @@ func startAuthorizationDigestMCPServer() int {
 
 // startAgentgatewayWithTokenExchange runs the documented agentgateway configuration against the
 // broker and MCP server on the host and returns agentgateway's base URL.
-func startAgentgatewayWithTokenExchange(ctx context.Context, brokerPort, mcpPort int, signingKey *helpers.LocalKey) string {
+func startAgentgatewayWithTokenExchange(ctx context.Context, brokerURL string, mcpPort int, signingKey *helpers.LocalKey) string {
+	brokerPort := hostPort(brokerURL)
 	configYAML := fmt.Sprintf(`binds:
 - port: 4000
   listeners:
   - routes:
-    - backends:
+    - policies:
+        jwtAuth:
+          mode: strict
+          preserveToken: true
+          providers:
+          - issuer: %s
+            audiences:
+            - %s
+            jwks:
+              file: %s
+      backends:
       - mcp:
           targets:
           - name: tools
@@ -144,7 +157,7 @@ func startAgentgatewayWithTokenExchange(ctx context.Context, brokerPort, mcpPort
                   file: %s
                 alg: RS256
                 kid: %s
-`, mcpPort, brokerPort, githubResourceURI, agentgatewayClientID, brokerTokenEndpoint, agentgatewayKeyPath, agentgatewaySigningKID)
+`, brokerIssuer(brokerURL), brokerAudience, agentgatewayJWKSPath, mcpPort, brokerPort, githubResourceURI, agentgatewayClientID, brokerTokenEndpoint, agentgatewayKeyPath, agentgatewaySigningKID)
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
@@ -155,6 +168,7 @@ func startAgentgatewayWithTokenExchange(ctx context.Context, brokerPort, mcpPort
 			Files: []testcontainers.ContainerFile{
 				{Reader: strings.NewReader(configYAML), ContainerFilePath: "/etc/agentgateway/config.yaml", FileMode: 0o644},
 				{Reader: strings.NewReader(signingKey.PrivatePEM()), ContainerFilePath: agentgatewayKeyPath, FileMode: 0o644},
+				{Reader: strings.NewReader(brokerJWKS(brokerURL)), ContainerFilePath: agentgatewayJWKSPath, FileMode: 0o644},
 			},
 			WaitingFor: wait.ForListeningPort("4000/tcp").WithStartupTimeout(time.Minute),
 		},
@@ -170,6 +184,25 @@ func startAgentgatewayWithTokenExchange(ctx context.Context, brokerPort, mcpPort
 	endpoint, err := container.PortEndpoint(ctx, "4000/tcp", "http")
 	Expect(err).ToNot(HaveOccurred())
 	return endpoint
+}
+
+func brokerIssuer(brokerURL string) string {
+	resp, err := helpers.HTTPClient().Get(brokerURL + "/.well-known/oauth-authorization-server")
+	Expect(err).ToNot(HaveOccurred())
+	metadata := decodeResponseBody(resp)
+	issuer, _ := metadata["issuer"].(string)
+	Expect(issuer).ToNot(BeEmpty())
+	return issuer
+}
+
+func brokerJWKS(brokerURL string) string {
+	resp, err := helpers.HTTPClient().Get(brokerURL + "/oauth2/jwks.json")
+	Expect(err).ToNot(HaveOccurred())
+	defer func() { _ = resp.Body.Close() }()
+	Expect(resp.StatusCode).To(Equal(http.StatusOK))
+	jwks, err := io.ReadAll(resp.Body)
+	Expect(err).ToNot(HaveOccurred())
+	return string(jwks)
 }
 
 func connectMCPClient(ctx context.Context, baseURL, bearerToken string) *client.Client {

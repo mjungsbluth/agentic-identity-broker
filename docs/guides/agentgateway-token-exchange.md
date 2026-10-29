@@ -42,8 +42,9 @@ approvals.
   agentgateway `resources` list. See
   [Manage agents and services](/docs/guides/manage-agents-and-services).
 - Agents that send agentgateway a subject token that the broker accepts. Its `aud` must
-  contain the broker audience. This guide uses the broker token endpoint URL. See
+  contain `token_exchange.expected_audience`, `token-exchange-broker` by default. See
   [OAuth2 server modes](/docs/concepts/oauth2-server-modes).
+- The issuer and JWKS URL of those subject tokens, so that agentgateway can validate them.
 
 ## How the exchange flows
 
@@ -54,6 +55,7 @@ sequenceDiagram
     participant B as Broker
     participant M as MCP server
     A->>G: MCP request with bearer subject token
+    G->>G: jwtAuth validates subject token
     G->>G: Sign client assertion with local key
     G->>B: POST /oauth2/token (RFC 8693)
     B->>B: Verify client assertion with inline key set
@@ -65,12 +67,14 @@ sequenceDiagram
 ```
 
 1. The agent calls agentgateway with its broker or upstream token as the bearer credential.
-2. Agentgateway sends that credential unchanged as `subject_token`. It does not validate the
-   credential. The broker validates it.
-3. Agentgateway signs a client assertion. Its `iss` and `sub` are the configured `clientId`.
-4. The broker verifies the assertion, the subject token, the user grant, and the stored
+2. `jwtAuth` validates the credential. An expired or invalid credential gets HTTP 401 and
+   never reaches the broker.
+3. Agentgateway sends the credential unchanged as `subject_token`. The broker validates it
+   again.
+4. Agentgateway signs a client assertion. Its `iss` and `sub` are the configured `clientId`.
+5. The broker verifies the assertion, the subject token, the user grant, and the stored
    provider session. It then returns the stored third-party token.
-5. Agentgateway sends `Authorization: Bearer <third-party token>` to the backend.
+6. Agentgateway sends `Authorization: Bearer <third-party token>` to the backend.
 
 ## Step 1: Create the gateway key pair
 
@@ -91,14 +95,25 @@ printf '{"keys":[{"kty":"RSA","kid":"gateway-2026-09","alg":"RS256","use":"sig",
 
 ## Step 2: Configure agentgateway
 
-Add the `oauthTokenExchange` policy to the backend that receives the exchanged token:
+Validate the subject token with `jwtAuth` on the route. Add the `oauthTokenExchange` policy to
+the backend that receives the exchanged token:
 
 ```yaml
 binds:
 - port: 4000
   listeners:
   - routes:
-    - backends:
+    - policies:
+        jwtAuth:
+          mode: strict
+          preserveToken: true # the exchange reads the subject token from Authorization
+          providers:
+          - issuer: https://broker.example.com
+            audiences:
+            - token-exchange-broker
+            jwks:
+              url: https://broker.example.com/oauth2/jwks.json
+      backends:
       - mcp:
           targets:
           - name: tools
@@ -121,6 +136,13 @@ binds:
                 kid: gateway-2026-09
 ```
 
+Keep `preserveToken: true`. With `false`, `jwtAuth` removes the `Authorization` header and the
+exchange has no subject token: every request fails with HTTP 500. The backend still never sees
+the subject token, because `oauthTokenExchange` replaces the header.
+
+This example validates broker-issued subject tokens. For upstream tokens, use the upstream
+issuer and its JWKS URL instead.
+
 Each agentgateway setting must match a broker setting:
 
 | Agentgateway setting | Broker setting |
@@ -128,7 +150,7 @@ Each agentgateway setting must match a broker setting:
 | `host` and `path` | The broker end-user URL and `/oauth2/token` |
 | `resources` | A `protected_resources` entry of the service whose token the backend needs |
 | `clientAuth.clientId` | `token_exchange.client_assertion.issuer_uri`. It is also the client assertion `sub` that the CEL policy sees. |
-| `clientAuth.assertionAudience` | `token_exchange.expected_audience`. Use the full broker token endpoint URL. |
+| `clientAuth.assertionAudience` | `token_exchange.client_assertion.expected_audience`. Use the full broker token endpoint URL. |
 | `clientAuth.alg` and `clientAuth.kid` | `alg` and `kid` of a key in `token_exchange.client_assertion.jwks` |
 
 ## Step 3: Configure the broker
@@ -137,9 +159,9 @@ Make the gateway `clientId` the client-assertion issuer. Then put the JWK Set fr
 
 ```yaml
 token_exchange:
-  expected_audience: "https://broker.example.com/oauth2/token" # agentgateway assertionAudience
   client_assertion:
     issuer_uri: "https://gateway.example.com" # agentgateway clientId; never contacted
+    expected_audience: "https://broker.example.com/oauth2/token" # agentgateway assertionAudience
     jwks: |
       {"keys":[{"kty":"RSA","kid":"gateway-2026-09","alg":"RS256","use":"sig","e":"AQAB","n":"<base64url modulus>"}]}
   claim_extraction:
@@ -157,14 +179,14 @@ You can also set the key set through `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSE
 Use `jwks_file` to rotate keys without a restart.
 See [Trust-anchor key sets](/docs/configuration#trust-anchor-key-sets) for the key-set rules.
 
-The broker checks the same `expected_audience` in client assertions and subject tokens. The
-default is `token-exchange-broker`. When you set it to the token endpoint URL, subject tokens
-must carry that URL in `aud` too. In `local` mode, set it through the issued-token claims:
+`client_assertion.expected_audience` applies only to client assertions. Subject tokens keep
+`token_exchange.expected_audience`, `token-exchange-broker` by default. In `local` mode, issue
+subject tokens with `agent_id` and that audience:
 
 ```yaml
 oauth2_authorization_server:
   local:
-    token_claims_expression: '{"agent_id": agent.id, "azp": agent.id, "aud": "https://broker.example.com/oauth2/token"}'
+    token_claims_expression: '{"agent_id": agent.id, "azp": agent.id, "aud": "token-exchange-broker"}'
 ```
 
 ## The request that agentgateway sends
@@ -212,6 +234,9 @@ in a token-exchange request. The response and error contract is in the
 - **Token reuse.** Agentgateway reuses an exchanged token for later requests that carry the
   same subject token. It does not call the broker for each request. A revoked grant stops new
   exchanges. It does not recall a token that agentgateway already holds.
+- **Expired subject tokens.** `jwtAuth` answers HTTP 401, so an MCP client can refresh its
+  token and retry. Without `jwtAuth`, the broker rejects the token and the client receives
+  HTTP 500 instead.
 - **Failures.** When the broker rejects an exchange, an MCP client receives HTTP 500 with
   JSON-RPC error `-32603`. The message names only the broker HTTP status. To find the cause,
   use the broker `token_exchange.*` log and span attributes. See
