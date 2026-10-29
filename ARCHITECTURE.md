@@ -346,6 +346,8 @@ The builder composes one `App.Shutdown` function. It stops the local/hybrid `Ses
 
 Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
+**Service-specific session recovery ([ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
+
 #### 3.1.4. End-to-End Testing Architecture
 
 **Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
@@ -832,7 +834,7 @@ Legacy missing identity remains usable only for stored services whose transition
 
 Missing bindings and unusable required files fail closed without stored or last-known fallback. Source errors remain distinct from provider rejection and retain existing generic client-facing responses. Credential-free events identify service UUID, operation, outcome, and a closed reason. Successful selection does not prove provider acceptance.
 
-RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the sessions landing page as `error_uri` before provider authentication. Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
+RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the service-specific third-party authorization `error_uri` before provider authentication (ADR 044). Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
 
 Both stores preserve existing indexes, version checks, and atomic updates. PostgreSQL constraints represent absent filesystem credentials as SQL NULL. Existing migration 040 backfills stored/false service state and leaves legacy session identities NULL. Its guarded DOWN refuses filesystem rows, retained transition evidence, and other incompatible records. Compatible DOWN discards non-secret session identity associations.
 
@@ -1102,7 +1104,7 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Name**: extproc-token-exchange
 
-**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming HTTP requests via Envoy's ExtProc filter, extracts Bearer tokens from request headers, performs RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication to optimize performance.
+**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. Agentgateway first validates the inbound JWT and sends its raw token and configured resource URI as trusted `aib.tokenexchange` metadata. ExtProc exchanges those values with the broker and replaces the downstream `Authorization` header on success. Exchanged tokens use an in-memory cache with singleflight deduplication.
 
 **Architecture**: Hexagonal (ports and adapters)
 
@@ -1155,28 +1157,21 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:
 
 - **Process RPC**: Streaming bidirectional RPC handling all Envoy ExtProc phases (RequestHeaders, RequestBody, ResponseHeaders, ResponseBody, RequestTrailers, ResponseTrailers)
-- **RequestHeaders Phase**: Primary processing phase where Bearer token extraction and exchange occurs
-- **Other Phases**: Pass-through responses with phase-specific response types
-- **ImmediateResponse**: Error response mechanism (500 on exchange failure, 503 on invalid URI)
+- **RequestHeaders Phase**: Validates exchange metadata and exchanges tokens before the request body is available
+- **Other Phases**: Pass-through responses with phase-specific response types; OPA evaluates buffered request bodies after a successful headers-phase exchange
+- **ImmediateResponse**: A non-transient broker exchange error with `error_uri` returns HTTP 403. The response has `WWW-Authenticate: Bearer error="insufficient_scope"` and the existing JSON-RPC `-32042` URL elicitation body (`id: null`). All protocols and OPA modes use this response. The challenge includes `error_description` and `error_uri` only when their bytes match RFC 6750 §3. Other exchange failures return 500, except expired assertions and open circuits, which return 503. Missing or invalid exchange metadata also returns 503. No failure mutates downstream `Authorization`.
 
 #### 3.2.3. Request Processing
 
 **RequestHeaders Processing**:
 
-1. Extract Bearer token from Authorization header (pass through if absent or non-Bearer)
-2. Extract resource URI from `:path` pseudo-header
-3. Validate URI (absolute, http/https scheme, non-empty host) — SSRF mitigation
-4. Call `Exchanger.Exchange()` with (token, uri)
-5. On success: replace Authorization header with `"Bearer " + exchangedToken`
-6. On failure: return 500 ImmediateResponse, reject request, log failure
+1. Read `subject_token` and `resource_uri` only from `aib.tokenexchange` metadata. Reject missing or invalid values without raw-header fallback.
+2. With OPA enabled, validate protocol metadata and MCP transport. For body-bearing requests, exchange before buffering the body. For header-only requests, allow OPA to decide before exchange.
+3. Call `Exchanger.Exchange()` with the validated metadata values.
+4. On success, replace `Authorization` with `Bearer <exchanged token>`.
+5. On a non-transient broker error with `error_uri`, return the 403 challenge from the request-headers phase. A client that supports MCP step-up can discover protected-resource metadata at `/.well-known/oauth-protected-resource/mcp` when the gateway serves that separate route.
 
-**Helper Functions**:
-
-- `extractBearerToken()`: Parse "Bearer <token>" format
-- `extractHeader()`: Case-insensitive header lookup
-- `validateResourceURI()`: URI parsing and scheme validation
-- `replaceAuthorizationHeader()`: Build HeadersResponse with header mutation
-- `immediateResponse()`: Build ImmediateResponse with status code and JSON body
+See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 023](specs/023-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.
 
 #### 3.2.4. Configuration
 
@@ -1375,6 +1370,8 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 044](adrs/044-service-specific-session-recovery-url.md) records the recovery decision.
+
 (List any third-party services or external APIs the system interacts with.)
 
 Service Name 1: [e.g., Stripe, SendGrid, Google Maps API]
@@ -1443,6 +1440,7 @@ This section lists all architectural decisions made for this project. ADRs docum
 
 - [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
 - [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
+- [ADR 044: Service-Specific Session Recovery URL](adrs/044-service-specific-session-recovery-url.md) - Accepted. Recoverable RFC 8693 session errors link to the resolved service's third-party OAuth2 GET with an encoded same-origin `/sessions` return URI.
 
 ### Security & Encryption
 
@@ -1719,6 +1717,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
+
+**Session Recovery URL**: Broker-built RFC 8693 `error_uri` for a recoverable `UserSession`. The resolved `ThirdpartyOAuth2Service` ID selects the authorization route; configured `PublicURL` supplies the origin and encoded `/sessions` return URI. The route starts `OAuth2SessionService` authorization with PKCE. It is separate from the broker authorization server's `/oauth2/authorize` and from grant consent links.
 
 **AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
 
