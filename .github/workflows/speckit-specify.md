@@ -1,6 +1,6 @@
 ---
 name: Spec Kit Specify
-description: Create one draft feature specification PR from an issue.
+description: Open one draft feature PR from an issue, starting with the feature's specification.
 intent: Give maintainers a reviewable specification derived only from the requested feature.
 on:
   workflow_call:
@@ -35,7 +35,7 @@ safe-outputs:
   create-pull-request:
     github-token-for-extra-empty-commit: none
     draft: true
-    title-prefix: "[Spec Kit] "
+    title-prefix: "[spec-driven] "
     preserve-branch-name: true
     allowed-branches: ["speckit/issue-*"]
     base-branch: ${{ github.event.repository.default_branch }}
@@ -71,8 +71,23 @@ When calling `create_pull_request`, omit `stack_position` and `stack_root`.
 This is a standalone PR, not a stacked PR. Do not populate unused optional
 fields with zero or empty-string placeholders.
 
-Create a draft PR on `context.branch`. Its body must start with a short summary
-of the feature to be built, not a summary of the automation. Include:
+Create a draft PR on `context.branch`. This PR delivers the whole feature: the
+same PR later receives the plan, the implementation, and its review. Describe
+the feature it delivers, never the documents of the current phase.
+
+Title the PR with the feature's name, such as `Notify agents before an approval
+expires`. The workflow adds the title prefix. Do not use the words
+specification, spec, specify, or draft in the title.
+
+Start the body with a `## Feature` section of two to four sentences. Say what
+the feature lets its users do once it ships, who benefits, and its scope. Write
+it as the target of this PR. Do not call the PR a specification, a spec-only
+change, or a first step, and do not summarize the automation.
+
+Do not add a stage or status section. The pipeline adds a `## Feature stage`
+section to the body and keeps it current.
+
+After the feature section, include:
 
 - `Related issue: https://github.com/<context.repository>/issues/<context.issue>`
 - `Specification: https://github.com/<context.repository>/blob/<context.branch>/<feature_directory>/spec.md`
@@ -83,8 +98,9 @@ of the feature to be built, not a summary of the automation. Include:
   must start a new PR comment.
   - After the automatic clarification, review the specification and comment
     `/speckit-plan [guidance]`. The pipeline then plans, writes tasks,
-    analyzes, and remediates on its own, and posts one approval comment listing
-    the API changes, ADRs, and consequential decisions with links to them.
+    analyzes, and remediates on its own, posts one approval comment listing
+    the API changes, ADRs, and consequential decisions with links to them,
+    and ends planning with an architecture review of the planning artifacts.
   - React with 👍 to the approval comment to approve it, then comment
     `/speckit-implement [guidance]`. If the container tests then fail on the
     implementation's commit, a repair run starts automatically, up to three

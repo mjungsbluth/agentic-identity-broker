@@ -448,6 +448,33 @@ jobs:
               throw error;
             }
 
+  # A finished plan gets the architectural review before sign-off; its findings return through /speckit-plan.
+  planreview:
+    needs: [route, specify, reanalyze, verify]
+    if: always() && needs.reanalyze.result == 'success' && needs.verify.result == 'success'
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+      focus: >-
+        Planning has ended and this pull request holds no implementation yet. Review the planning artifacts as the
+        design the implementation must follow: the Spec Kit feature directory (spec.md, plan.md, tasks.md, research.md,
+        data-model.md, contracts/, quickstart.md) and any ADR or API contract drafts. Judge each dimension by what the
+        plan commits to build, and report gaps and contradictions in the design, not missing code. Phrase every
+        recommended change as an edit to the planning artifacts.
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
   # A completed implementation, or a maintainer's /architecture-review, gets the architectural review in this run.
   # A CI repair does not: the implementation it repairs was already reviewed.
   review:
@@ -619,10 +646,11 @@ jobs:
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   # The proposal comment: a maintainer ticks items and Apply, and the pipeline applies them in a new run.
+  # A plan review publishes none; it only withdraws a stale proposal and reports its recommendation.
   proposals:
-    needs: [route, review, reviewed, fix, rereview]
+    needs: [route, planreview, review, reviewed, fix, rereview]
     if: >-
-      always() && (needs.rereview.result == 'success' ||
+      always() && (needs.rereview.result == 'success' || needs.planreview.result == 'success' ||
         (needs.reviewed.result == 'success' && needs.fix.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -656,7 +684,9 @@ jobs:
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          REVIEW_COMMENT: ${{ needs.rereview.result == 'success' && needs.rereview.outputs.comment_id || needs.review.outputs.comment_id }}
+          REVIEW_COMMENT: >-
+            ${{ needs.rereview.result == 'success' && needs.rereview.outputs.comment_id ||
+            needs.planreview.result == 'success' && needs.planreview.outputs.comment_id || needs.review.outputs.comment_id }}
           REVIEW_REMEDIABLE: ${{ needs.rereview.result == 'success' || needs.reviewed.outputs.remediable == 'true' }}
         with:
           github-token: ${{ steps.app.outputs.token }}
@@ -740,7 +770,7 @@ jobs:
 
   report:
     needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals,
-      review, reviewed, fix, verified, apply, rereview, proposals, tests]
+      planreview, review, reviewed, fix, verified, apply, rereview, proposals, tests]
     if: always() && needs.route.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
