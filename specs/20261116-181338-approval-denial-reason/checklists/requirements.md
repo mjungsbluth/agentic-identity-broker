@@ -33,6 +33,7 @@
 
 ## Notes
 
-- FR-010 proposes sharing the permanent-denial reason only with the original approval's decision, including authorized rereads, not with later blocked invocations. Scenario 3.7 and Journey 3 define acceptance coverage. The answer awaits the maintainer's 👍 on the clarification comment; planning records that acceptance without a separate approval item. A complete specification does not constitute maintainer sign-off.
-- The 500-Unicode-code-point limit and whitespace handling are explicit product defaults in Assumptions, not implementation choices. API, storage, and design-system sections state binding design constraints without selecting implementation mechanisms or approving contract changes. The unchanged reason-free HTTP exchange documents compatibility; reason-bearing wire contracts remain for planning and approval.
+- FR-010 (reason shared only with the original approval's decision, not with later blocked invocations) was accepted by the maintainer on the clarification comment; Scenario 3.7 and Journey 3 define acceptance coverage.
+- Planning (Session 2026-11-16, planning) refined FR-007, FR-008, Scenarios 3.4 and 3.7, and SC-006 to define agent delivery as the first repeat of the original call, at most once, and added the reason-bearing HTTP and MCP exchanges to the journeys. These changes and the wire contracts await the approval items in `plan.md`; a complete specification does not constitute maintainer sign-off.
+- The 500-Unicode-code-point limit and whitespace handling are explicit product defaults in Assumptions. The unchanged reason-free HTTP exchange documents compatibility.
 - Checked items describe the specification's quality and outcome definitions, not an implementation test result or a claim that the feature has shipped.
