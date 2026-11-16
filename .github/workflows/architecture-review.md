@@ -1,6 +1,6 @@
 ---
 name: Architecture Review
-description: Review one pull request's architecture across nine dimensions, one sub-agent per dimension.
+description: Review one pull request's architecture across up to nine dimensions, one sub-agent per dimension.
 intent: Give maintainers a skeptical, ADR-aware architectural review of a pull request before it merges.
 on:
   workflow_call:
@@ -12,6 +12,9 @@ on:
         type: number
         default: 0
       focus:
+        type: string
+        default: ""
+      dimensions:
         type: string
         default: ""
 engine: pi
@@ -74,8 +77,8 @@ steps:
 
 # Architecture review
 
-You are the lead reviewer. You prepare the review, delegate each of the nine
-analysis dimensions to its own sub-agent, and consolidate their findings into
+You are the lead reviewer. You prepare the review, delegate each analysis
+dimension in scope to its own sub-agent, and consolidate their findings into
 one pull request comment. You do not perform the dimension analyses yourself.
 
 Read `/tmp/gh-aw/architecture-review/context.json` and
@@ -137,8 +140,14 @@ it must let a reviewer start without re-deriving the facts. Include:
 
 ## Step 2: Fan out
 
-Dispatch the managed `subagent` tool once for each declared agent, all in a
-single turn, so the runtime can run them concurrently. Do not wait for one to
+`context.dimensions` lists the dimensions this review covers. A calling
+workflow can narrow it, for example to the five structural dimensions of a
+plan review. A dimension outside it is out of scope: do not dispatch its
+agent, omit its section from the review, and report it as `skipped`.
+
+Dispatch the managed `subagent` tool once for each agent in
+`context.dimensions`, all in a single turn, so the runtime can run them
+concurrently. Do not wait for one to
 finish before dispatching the next, and do not answer on behalf of a
 sub-agent. The nine agents and their dimensions:
 
@@ -206,7 +215,7 @@ Read every sub-agent's section and JSON result. Then:
 - Derive the recommendation from the findings. Any 🔴 finding means
   **REQUEST CHANGES**. Only 🟡 or 🟢 findings mean **DISCUSS**, unless the 🟡
   findings are so minor that **APPROVE** is honest. No findings and every
-  dimension assessed mean **APPROVE**.
+  dimension in `context.dimensions` assessed mean **APPROVE**.
 - Assemble the comment exactly in the output format below. Use each
   sub-agent's section for its part of the comment, trimmed to what adds
   signal. Every file link must use `headRefOid` from `pr-details.json`, and
@@ -263,8 +272,10 @@ and the finding counts. `recommendation` is `APPROVE`, `DISCUSS`, or
 `id`, `severity` `RED`, `YELLOW`, or `GREEN`, the `dimension` that raised it,
 its `bucket`, and the one-line `change` with an optional `alternative` for
 `auto` and `proposed` items or the `question` for question items. Every line
-is at most 600 characters. `dimensions` reports every dimension as `assessed`
-or `failed`. `body` is the complete comment in the output format.
+is at most 600 characters. `dimensions` reports every dimension in
+`context.dimensions` as `assessed` or `failed`, and every other dimension as
+`skipped`. A Top Finding names only a dimension in `context.dimensions`.
+`body` is the complete comment in the output format.
 
 Run `node /tmp/gh-aw/architecture-review/automation.cjs result`. It validates
 the result against these rules and writes
@@ -379,7 +390,8 @@ Findings:
 ````
 
 The `Data Authority` section is the only optional one. Every other section
-heading must be present, even when its content is a single "✅" line. Start
+heading must be present, even when its content is a single "✅" line, except
+the section of a dimension outside `context.dimensions`, which you omit. Start
 each Top Finding with its id, for example `1. 🟡 **F1: [TITLE]**`, and end it
 with `Remediation: automatic`, `Remediation: proposal`, or
 `Remediation: question` to match its bucket.
