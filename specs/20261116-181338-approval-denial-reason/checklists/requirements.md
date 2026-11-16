@@ -33,6 +33,6 @@
 
 ## Notes
 
-- FR-010 proposes sharing the permanent-denial reason only with the original approval's decision, including authorized rereads, not with later blocked invocations. Scenario 3.7 and Journey 3 define acceptance coverage. Clarifications identifies this as approval item D-001 for planning to register; a complete specification does not constitute maintainer sign-off.
+- FR-010 proposes sharing the permanent-denial reason only with the original approval's decision, including authorized rereads, not with later blocked invocations. Scenario 3.7 and Journey 3 define acceptance coverage. The answer awaits the maintainer's 👍 on the clarification comment; planning records that acceptance without a separate approval item. A complete specification does not constitute maintainer sign-off.
 - The 500-Unicode-code-point limit and whitespace handling are explicit product defaults in Assumptions, not implementation choices. API, storage, and design-system sections state binding design constraints without selecting implementation mechanisms or approving contract changes. The unchanged reason-free HTTP exchange documents compatibility; reason-bearing wire contracts remain for planning and approval.
 - Checked items describe the specification's quality and outcome definitions, not an implementation test result or a claim that the feature has shipped.
