@@ -47,13 +47,32 @@ Report each run's results only in the session result, not in this guide or other
 3. Open the URL as the owner, choose **Deny**, enter `Use the staging project instead.`, and
    confirm. Expect a read-only confirmation that shows the reason. Reload: same reason, no edit
    control.
-4. Repeat the identical `tools/call`. Expect HTTP 200 with `result.isError: true`, the reason in
+4. With the denial unrevoked and no other valid matching approval authorizing the repeat, repeat
+   the identical `tools/call`. Expect HTTP 200 with `result.isError: true`, the reason in
    the text content, and `_meta["io.agentic-identity-broker/tool-approval"].denial_reason` equal to
    the submitted text.
 5. Repeat the identical `tools/call` again. Expect a new URL elicitation (temporary denial; the
    outcome was already delivered).
 6. Repeat steps 2–4 with **Deny permanently**. Then call the tool again with the original and with
    different arguments. Expect HTTP 403 `tool permanently denied` without the reason both times.
-7. Try `POST /api/approvals/{id}/deny` with a 501-character `denial_reason`. Expect `400
+7. Try `POST /api/approvals/{id}/deny` with a nonblank 501-code-point `denial_reason`. Expect `400
    invalid_denial_reason` and the approval still pending.
-8. Search the broker and ExtProc log output for the submitted reasons. Expect no match.
+8. Submit 501 Unicode whitespace code points (for example U+2003) from each browser surface
+   and directly by API within the 16-KiB body bound. Expect denial without a reason, not a length
+   error. Repeat with nonblank text over 500 code points: expect rejection while still pending.
+9. On an independent request deny permanently, then revoke before delivery and expiry. Expect
+   the next repeat to follow the normal new-approval flow, a direct claim to return 204 (delivery-pending cleared), and the
+   owner reread to retain the reason. Test revoked previous grants separately. In both adapters,
+   cover both claim/revoke lock orders: revocation first suppresses a claim; claim first may be
+   in flight, never redelivered.
+10. Synchronize a valid approval overlapping a temporary denial: expect the repeat to proceed
+    with no delivery claim. Exercise concurrent approval/revocation with snapshots confirmed
+    before/after the mutation under existing freshness guarantees. A permanent denial still
+    blocks first even when an approval matches.
+11. Inject claim/storage timeout, connection, and unexpected service failures in handler tests:
+    expect `500` with only `{"error":"internal_error","message":"failed to deliver approval decision"}`.
+    ExtProc must fail closed with its constant 403, no forwarding or new approval, and no content
+    export. A committed-but-lost claim must stay claimed.
+12. Run Scenario 3.5 in the frontend suite for the full successful/rejected browser → broker →
+    ExtProc privacy journey. Inspect captured browser console and all components' logs, spans,
+    metrics, and audit metadata. Expect no reason content and only permitted non-content metadata.

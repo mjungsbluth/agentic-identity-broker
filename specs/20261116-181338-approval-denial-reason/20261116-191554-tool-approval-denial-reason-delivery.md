@@ -1,4 +1,4 @@
-# ADR 20261116-191554: Tool Approval Denial Reasons and Denied-Outcome Delivery
+# ADR 20261116-191554-tool-approval-denial-reason-delivery: Tool Approval Denial Reasons and Denied-Outcome Delivery
 
 **Status**: Proposed
 **Date**: 2026-11-16
@@ -29,14 +29,16 @@ order, at-most-once `once` consumption), `014-long-poll-listen-notify` (sync), a
 
 `ToolApproval` gains an optional immutable `DenialReason` value object, set only in the
 pending → denied transition and stored in `tool_approvals.denial_reason`. Empty or whitespace-only
-input means no reason; other input is kept exactly. Store constraints require a denied status and
+input means no reason, normalized before nonblank length validation (including 501 whitespace
+code points within the independent 16-KiB body bound); other input is kept exactly. Store constraints require a denied status and
 1–500 characters.
 
 ### 2. Delivery happens on the agent's repeat of the original invocation, at most once
 
 The ExtProc approval gate delivers a denied decision when the agent repeats the original
 invocation (same verified principal and agent, tool name, and canonical arguments hash) before the
-approval's existing `expires_at`. The broker claims the delivery atomically through
+approval's existing `expires_at`, while the denial is unrevoked and no valid matching approval
+takes precedence under FR-009. The broker claims the delivery atomically through
 `POST /api/approvals/deliveries` and records `denial_delivered_at`. Each denied decision is
 delivered at most once. A later invocation, including an identical one after delivery, follows the
 existing behavior: a temporary denial lets it create a new approval, and a permanent denial blocks
@@ -45,8 +47,14 @@ it with `tool permanently denied` and no reason.
 This adds a step to the gate order of `036-extproc-approval-cache-and-gate` without changing any
 authorization outcome of that ADR: a fresh permanent denial still blocks, a fresh approval still
 proceeds without a delivery call, and creation still follows the authoritative read. The gate calls
-the broker for delivery only when the fresh snapshot shows an undelivered denial for the invoked
-tool inside its window. A failed delivery call denies the invocation and creates no approval.
+the broker for delivery only when the fresh snapshot shows an undelivered, unrevoked denial for
+the invoked tool inside its window. A temporary denial never overrides a matching approval;
+it remains unclaimed until an eligible repeat or expiry. Concurrent grants or revocations retain
+the existing snapshot freshness semantics, without a new globally serialized precedence check.
+A failed delivery call denies the invocation and creates no approval. Claim/storage timeouts,
+connection failures, or unexpected service failures return `500` in the existing `ApprovalError`
+envelope with constant `internal_error` and `failed to deliver approval decision`, never raw
+errors or reason text. A committed-but-lost claim is not reset.
 
 ### 3. Delivery endpoint authentication
 
@@ -57,7 +65,17 @@ Agent-subject tokens are rejected as on the other subject-token approval endpoin
 
 ### 4. The reason is not part of synchronization
 
-The sync snapshot carries only `expires_at` and `denial_delivered_at` so the gate can pre-filter.
+The sync snapshot adds only `expires_at`, `denial_delivered_at`, and `denial_delivery_pending` so the gate can
+pre-filter. Atomic migration `048` adds nullable `denial_delivered_at` and `denial_reason`,
+`denial_delivery_pending BOOLEAN NOT NULL DEFAULT FALSE`, three checks, and a partial
+deliverability index, as specified in `data-model.md`. New pending → denied decisions set the flag
+true; claim and permanent revocation clear it atomically, preserving reason and any prior delivery
+time. Historical records default false: previous revocations cannot be inferred reliably, and
+are never newly delivered as user denials. New claims require `denial_delivery_pending = TRUE`
+and `approved_at IS NULL`, distinguishing a revoked permanent denial from a temporary denial
+and excluding revoked grants. Claim and revocation serialize under the same row/write lock:
+revocation first suppresses delivery; claim first may already be in flight and is not recalled.
+Owner rereads retain the immutable reason in either case.
 The reason travels only in the delivery claim response to the one ExtProc instance that renders it.
 
 ### 5. Agent-facing representation
@@ -89,14 +107,15 @@ only whether a reason was present.
 
 ### Positive
 
-- Agents learn both temporary and permanent denials, with the user's explanation when given.
+- Agents learn eligible temporary and permanent denials, with the user's explanation when given;
+  unclaimed withdrawn denials are suppressed and valid matching approvals retain precedence.
 - Existing clients and reason-free denials keep working; all API changes are additive.
 - No new cache, configuration key, or dependency.
 
 ### Negative
 
-- A temporary denial now gives the agent one denied outcome on its first retry instead of a fresh
-  approval prompt.
+- A temporary denial now gives the agent one denied outcome on its first eligible retry instead
+  of a fresh approval prompt, unless a valid matching approval takes precedence.
 - A lost delivery response is not redelivered to the agent.
 - A repeated invocation inside the window adds one broker call while an undelivered denial for that
   tool exists.
@@ -118,6 +137,11 @@ only whether a reason was present.
    and would end permanent-denial enforcement.
 7. **Application-layer encryption of the reason**: rejected for this feature; arguments of the same
    sensitivity are plaintext, and the envelope encryption context has no approval subject.
+8. **Deliver a denial after permanent revocation**: rejected; the spec excludes withdrawn denials.
+   Reusing the delivery timestamp to suppress it falsely records a delivery, so track pending
+   delivery with a separate false-default flag; revocation clears it. DOWN discards all three new fields without changing existing data.
+9. **Temporary denials override valid approvals**: rejected; changes accepted authorization
+   precedence and adds a broker check to the approved hot path.
 
 ## Relationships
 

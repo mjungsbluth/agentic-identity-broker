@@ -69,6 +69,9 @@ planned.
   timeout, and transport failure. Inspect logs, span attributes/events/status, and an
   `sdkmetric.ManualReader`; assert the unchanged gate metric attribute set and deny increment.
 - Full acceptance Scenario 3.5 exercises successful and rejected browser/broker/ExtProc journeys;
-  browser tests fail on console output containing the synthetic reason. Scenario 3.6 verifies
+  its single canonical `It()` is in `tests/e2e/frontend/approval_denial_reason_test.go`, reusing
+  the frontend lifecycle and test-only broker/ExtProc signal capture. Browser tests fail on console
+  output containing the synthetic reason. Include constant 500 claim-failure paths and revoked
+  denial suppression without text export or a false successful-delivery audit. Scenario 3.6 verifies
   literal markup display without script execution. Test instrumentation belongs in `_test.go`
   and `tests/`, never new test-only production APIs.

@@ -34,6 +34,7 @@
 ## Notes
 
 - FR-010 (reason shared only with the original approval's decision, not with later blocked invocations) was accepted by the maintainer on the clarification comment; Scenario 3.7 and Journey 3 define acceptance coverage.
-- Planning (Session 2026-11-16, planning) refined FR-007, FR-008, Scenarios 3.4 and 3.7, and SC-006 to define agent delivery as the first repeat of the original call, at most once, and added the reason-bearing HTTP and MCP exchanges to the journeys. These changes and the wire contracts await the approval items in `plan.md`; a complete specification does not constitute maintainer sign-off.
-- The 500-Unicode-code-point limit and whitespace handling are explicit product defaults in Assumptions. The unchanged reason-free HTTP exchange documents compatibility.
+- Planning (Session 2026-11-16, planning) refined FR-007, FR-008, Scenarios 3.4 and 3.7, and SC-006 to define agent delivery as the first eligible repeat of the original call, at most once, with valid-approval precedence and revocation suppression, and added the reason-bearing HTTP and MCP exchanges to the journeys. These changes and the wire contracts await the approval items in `plan.md`; a complete specification does not constitute maintainer sign-off.
+- Delivery-pending defaults false for historical records; new denials set it, and claims/revocation clear it without changing reasons. The schema and sync additions remain Proposed under DB-048/API-SYNC. Scenario 3.5's full privacy journey belongs in the frontend suite; the 13-scenario mapping is unchanged.
+- The 500-Unicode-code-point nonblank limit and whitespace-before-length handling are explicit product defaults in Assumptions. The unchanged reason-free HTTP exchange documents compatibility.
 - Checked items describe the specification's quality and outcome definitions, not an implementation test result or a claim that the feature has shipped.

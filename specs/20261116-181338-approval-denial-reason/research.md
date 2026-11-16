@@ -58,8 +58,10 @@ characters — rejected as rewriting user text without a storage need.
 ## R3 — Browser and non-browser input contract
 
 **Decision** (part of **API-DENY**, Proposed): `DenyRequest` gains optional `denial_reason`
-(`string`, `maxLength: 500`). Omitted, `null`, empty, or whitespace-only means no reason. A
-non-string value, more than 500 code points, U+0000, or a body larger than 16 KiB returns
+(`string`, nullable; conditional schema allows at most 500 code points OR all-whitespace
+input). Omitted, `null`, empty, or whitespace-only means no reason, normalized before length
+validation. A non-string/non-null value, nonblank text over 500 code points, U+0000, or a body
+larger than 16 KiB returns
 `400` with error code `invalid_denial_reason` and a constant description that never echoes the
 text. Body validation, including the reason, runs before the ownership and state checks, as for
 `persistence` today; an invalid body never changes the approval. `DenyResponse.data` and `ToolApprovalDetail` gain `denial_reason`,
@@ -67,13 +69,18 @@ present only when a reason was recorded. Existing reason-free bodies stay valid.
 
 **Rationale**: One name (`denial_reason`) across request, response, and read models keeps the
 field searchable and unambiguous next to other "reason" concepts (OPA `reasons`, logging
-`reason`). JSON Schema `maxLength` counts code points, matching FR-002. The 16 KiB bound is above
-the largest legal body (500 code points as 12-byte `\uXXXX` surrogate escapes ≈ 6 KiB plus the
-other fields) and closes the current unbounded `io.ReadAll` in `deny_handler.go`.
+`reason`). JSON Schema `maxLength` counts code points; an `anyOf` whitespace-pattern branch
+models normalization before nonblank length validation (FR-002/FR-003). Its explicit Unicode
+White_Space set matches Go `unicode.IsSpace`, not JavaScript `trim()` or `\\s` (which differ on
+U+0085 and U+FEFF). Browser validation uses that same set; 501 whitespace code points are
+accepted as absent on both pages, by the handler, and by the domain constructor. The independent
+16-KiB body bound accommodates even 500 astral code points escaped as surrogate pairs (≈ 6 KiB
+plus the other fields), bounds blank input too, and closes the current unbounded `io.ReadAll` in
+`deny_handler.go`.
 
 **Alternatives considered**: `reason` — shorter but collides with existing reason vocabulary.
 `422 Unprocessable Entity` (as `invalid_pattern`) — rejected because the limit is a schema
-constraint that OpenAPI already expresses; `400` matches the existing `persistence` validation on
+constraint that OpenAPI conditionally expresses; `400` matches the existing `persistence` validation on
 this endpoint. A separate `413` for oversized bodies — rejected to avoid a new status code on this
 endpoint.
 
@@ -82,7 +89,8 @@ endpoint.
 **Decision** (**DEC-DELIVERY**, **API-MCP**, Proposed): The ExtProc approval gate delivers the
 original approval's decision when the agent repeats the **original invocation** — same verified
 `(principal, agent_id)`, same tool name, and same canonical arguments hash — after the decision and
-before the approval's existing `expires_at`. Delivery is **at most once** per denied decision and
+before the approval's existing `expires_at`, provided the denial is unrevoked and no matching
+approval takes precedence under FR-009. Delivery is **at most once** per denied decision and
 is claimed atomically at the broker (R5). The agent receives an MCP `CallToolResult` with
 `isError: true`, a fixed text that contains the reason, and structured metadata under
 `_meta["io.agentic-identity-broker/tool-approval"]`
@@ -105,8 +113,23 @@ a temporary denial lets a later call create a new approval; a permanent denial r
   (FR-008, Assumptions).
 
 **Consequences**: A lost response is not redelivered to the agent (same at-most-once guarantee as
-`once` approvals, ADR 036). The owner can still reread the reason. A temporary denial now gives the
-agent one denied outcome on its first retry instead of a fresh prompt (**DEC-TEMP**).
+`once` approvals, ADR 036-extproc-approval-cache-and-gate). The owner can still reread the reason.
+A temporary denial now gives the agent one denied outcome on its first eligible retry instead of
+a fresh prompt (**DEC-TEMP**); it never overrides a valid matching approval.
+
+**Revocation and overlap** (part of **DEC-DELIVERY**, **DB-048**, Proposed): Revoking a permanent
+denial clears `denial_delivery_pending` atomically with clearing its permanent scope, preserving its reason and
+any prior delivery timestamp. New claims require `denial_delivery_pending = TRUE`; a claim committed first
+may already be in flight and is not recalled. A revoked prior grant is excluded by `approved_at`
+as well. A valid matching approval still proceeds without a delivery call when no permanent
+denial blocks. An overlapping temporary denial stays unclaimed until an eligible repeat or
+expiry. Concurrent changes retain existing freshness-bounded snapshot semantics, not an added
+broker serialization on the approved hot path. See Journey 1's overlap variant and Journey 3
+Step 7 for both-adapter/gateway cases.
+
+**Main alternatives**: Retain delivery after revocation — rejected because the spec excludes
+withdrawn denials. Make temporary denial override valid approvals — rejected because it changes
+accepted authorization precedence and the no-broker-call approved path.
 
 **Alternatives considered**:
 
@@ -130,15 +153,21 @@ with body `{"tool_name": "...", "arguments": {...}}`. It requires the same dual 
 `POST /api/approvals` (subject token + `X-Client-Assertion`). The broker derives principal and agent
 from the authenticated context, computes `arguments_hash` with the same function as creation, and
 atomically claims the newest undelivered, never-approved denied approval of that pair, tool, and
-hash whose `expires_at` is in the future. `200` returns the claimed decision with
+hash whose `expires_at` is in the future and `denial_delivery_pending` is true. `200` returns the claimed decision with
 `denial_reason` when present; `204` means nothing is deliverable. Errors: `400` (malformed body),
-`401` (missing or invalid credentials), `403` (agent-subject token, ADR 045 decision 6a), and `503`
-(authentication unavailable), mirroring `POST /api/approvals`. Among several candidates the newest
-`denied_at` wins.
+`401` (missing or invalid credentials), `403` (agent-subject token,
+ADR 045-agent-subject-impersonation decision 6a), `503` (authentication unavailable), and `500`
+for claim/storage timeouts, connection failures, or unexpected claim/service failures. The `500`
+uses the existing `ApprovalError` envelope with constant `error: internal_error` and
+`message: failed to deliver approval decision`, following the create handler's internal-error
+convention. It never echoes dependency errors or reason text. A committed-but-lost response
+remains claimed; no error can reset delivery state or enable redelivery. Service/handler/client
+tests cover each failure class and gateway fail-closed behavior. Among several candidates the
+newest `denied_at` wins.
 
 **Rationale**: The endpoint returns user-authored text to the gateway that minted the prompt, so it
 takes the strongest existing boundary: proof of both the user/agent context and the trusted
-gateway caller (ADR 018 rationale for create). Correlating on the broker keeps the hash
+gateway caller (ADR 018-approval-endpoint-auth-boundaries rationale for create). Correlating on the broker keeps the hash
 computation in one place and needs one call; ExtProc only pre-filters with synced metadata (R6).
 `204` makes "no delivery" a normal outcome instead of an error.
 
@@ -152,13 +181,13 @@ enforcement.
 ## R6 — Sync snapshot additions and gate pre-filter
 
 **Decision** (**API-SYNC**, Proposed): `ToolApprovalSummary` gains `expires_at` (always) and
-`denial_delivered_at` (nullable). The reason itself is never in the snapshot. The ExtProc gate calls
+nullable `denial_delivered_at` and required boolean `denial_delivery_pending`. The reason itself is never in the snapshot. The ExtProc gate calls
 the delivery endpoint only when the pair's fresh snapshot holds a candidate: `status=denied`,
-`approved_at` absent, `denial_delivered_at` absent, `expires_at` in the future, and `tool_name`
+`approved_at` and `denial_delivered_at` absent, `denial_delivery_pending` true, `expires_at` in the future, and `tool_name`
 equal to the invoked tool. The delivery claim updates the row, so the existing sync trigger bumps
 the version and every ExtProc instance drops the candidate.
 
-**Gate order** (extends ADR 036, does not change its authorization outcomes):
+**Gate order** (extends ADR 036-extproc-approval-cache-and-gate, does not change its authorization outcomes):
 
 1. Fresh permanent denial for the tool → if a candidate exists, claim; `200` → denied outcome with
    reason; `204` → existing `tool permanently denied`.
@@ -172,7 +201,7 @@ the version and every ExtProc instance drops the candidate.
 minutes after a denial. A delivered or expired denial never triggers a call again.
 
 **Alternatives considered**: Compute the arguments hash in ExtProc and compare locally — rejected:
-duplicates broker canonicalization outside the shared `toolpattern` package (ADR 035 boundary)
+duplicates broker canonicalization outside the shared `toolpattern` package (ADR 035-shared-tool-pattern-matching boundary)
 and risks number-format drift. Always call the broker on a miss — rejected as unnecessary load.
 
 ## R7 — Persistence
@@ -180,24 +209,34 @@ and risks number-format drift. Always call the broker on a miss — rejected as 
 **Decision** (**DB-048**, Proposed): Atomic migration
 `048_add_tool_approval_denial_reason.{up,down}.sql`:
 
-- `ALTER TABLE tool_approvals ADD COLUMN denial_reason TEXT NULL, ADD COLUMN denial_delivered_at TIMESTAMPTZ NULL`;
+- `ALTER TABLE tool_approvals ADD COLUMN denial_reason TEXT NULL, ADD COLUMN denial_delivered_at TIMESTAMPTZ NULL, ADD COLUMN denial_delivery_pending BOOLEAN NOT NULL DEFAULT FALSE`;
 - `CHECK (denial_reason IS NULL OR (status = 'denied' AND char_length(denial_reason) BETWEEN 1 AND 500))`;
 - `CHECK (denial_delivered_at IS NULL OR status = 'denied')`;
-- partial index `idx_tool_approvals_deliverable_denials ON (principal, agent_id, tool_name, arguments_hash) WHERE status = 'denied' AND denial_delivered_at IS NULL`.
+- `CHECK (NOT denial_delivery_pending OR (status = 'denied' AND approved_at IS NULL AND denial_delivered_at IS NULL))`;
+- partial index `idx_tool_approvals_deliverable_denials ON (principal, agent_id, tool_name, arguments_hash) WHERE status = 'denied' AND approved_at IS NULL AND denial_delivered_at IS NULL AND denial_delivery_pending`.
 
-Existing rows get `NULL` in both columns (no backfill, DB-001). DOWN drops the index, constraints,
+Existing rows get `NULL` reason/delivery time and false delivery-pending (no backfill, DB-001).
+Historical decisions are not newly delivered, because their temporary-denial and revoked-denial
+states cannot be distinguished reliably. New `Deny` writes set delivery-pending true; claim and
+permanent revocation clear it atomically. DOWN drops the index, constraints,
 and columns; it discards recorded reasons, which is documented in the migration test. The reason is
 stored as plaintext, like `arguments` and `description`.
 
-**Rationale**: Two nullable columns and checks keep the invariant in the store for both writers.
+**Rationale**: Two nullable columns, a delivery-pending flag, and checks distinguish deliverable
+user denials from claimed, revoked, and historical records in both adapters. The flag remains
+false after permanent scope is cleared; setting `denial_delivered_at` on revocation would falsely
+report a delivery.
 The partial index serves the claim query. The existing row trigger already publishes sync
 changes for the new updates.
 
 **Alternatives considered**: Application-layer encryption with the envelope encryption stack —
 rejected: tool `arguments` carry comparable personal data in plaintext today, the spec makes no
-new encryption promise, and ADR 008's single-subject encryption context has no approval subject.
-A delivery-state enum column — rejected; a nullable timestamp carries the same information plus
-audit time.
+new encryption promise, and ADR 008-encryption-context-optimization's single-subject encryption
+context has no approval subject. A delivery-state enum column — rejected; the timestamp carries
+claim time, while the pending flag safely excludes historical revocations and claim-before-revoke
+races. A new revocation timestamp alone cannot exclude ambiguous historical records without
+an extra eligibility bit or invented backfill. Reuse the delivery
+timestamp to suppress revocation — rejected because it invents a delivery that did not happen.
 
 ## R8 — Logging, tracing, and metrics
 
@@ -241,7 +280,9 @@ third-party defaults rather than this feature.
 **Decision**: Both denial surfaces (`ApprovalReviewPage` and the pending card on
 `ToolAuthorizationsPage`) open a shared denial form built from design-system `TextArea`, `Button`,
 and status components. The form shows the optional label, live `n / 500 characters` count
-(counted with `Array.from(text).length`), and the sharing notice, keeps the text on validation
+(counted with `Array.from(text).length`), and the sharing notice. It normalizes all-whitespace
+input using R3's explicit Unicode set before applying the nonblank limit, never disabling submit
+just because 501 whitespace code points are present, keeps the text on validation
 error, and discards it on cancel. **Deny** and **Deny permanently** both open the form with their
 existing scope. The confirmation renders the reason as a React text node (no
 `dangerouslySetInnerHTML`, no Markdown) inside a read-only block and omits the heading when there is

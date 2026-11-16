@@ -16,8 +16,14 @@ paths:
         Called by ExtProc when the agent repeats a tool invocation whose approval was denied.
         The broker derives the principal and agent from the authenticated subject token and
         atomically claims the newest denied approval of that pair whose tool name and canonical
-        arguments hash equal the request, that was never approved, that has not been delivered,
-        and whose `expires_at` is in the future. A claimed decision is never claimed again.
+        arguments hash equal the request, that was never approved, that has not been delivered or
+        revoked (`denial_delivery_pending` true), and whose `expires_at` is in the future.
+        A claimed decision is never claimed again. Historical records have no pending delivery.
+        Revocation suppresses unclaimed delivery without changing the owner's reason; a claim
+        committed before revocation may already be in flight.
+        ExtProc preserves gate precedence: a permanent denial blocks first; otherwise a valid
+        matching approval proceeds without a claim. This endpoint checks record eligibility,
+        not the gateway's freshness-bounded approval snapshot.
         Dual-auth required: subject token + client assertion, as for `POST /api/approvals`.
         The response can contain user-authored text; callers must not log or record it.
       tags:
@@ -67,11 +73,24 @@ paths:
         "403":
           description: |
             The subject token is an agent-subject token (`token_exchange.claim_extraction.agent_subject_expression`
-            matched, ADR 045 decision 6a). Error code `forbidden`.
+            matched, ADR 045-agent-subject-impersonation decision 6a). Error code `forbidden`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApprovalError"
+        "500":
+          description: |
+            Claim/storage timeout, connection failure, or unexpected claim/service failure.
+            Constant error code `internal_error` and message `failed to deliver approval decision`.
+            Never include raw dependency errors, credentials, or reason text. A failure whose
+            claim committed before the response was lost does not undo delivery or permit redelivery.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalError"
+              example:
+                error: internal_error
+                message: failed to deliver approval decision
         "503":
           description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
@@ -88,7 +107,9 @@ paths:
         ExtProc enforces the denial before matching approvals and does not create another approval request.
         An optional `denial_reason` is recorded in the same transition and can never be added,
         changed, or removed afterwards. It is shared with the requesting agent once, when the
-        agent repeats the original invocation before `expires_at`.
+        agent repeats the original invocation before `expires_at`, provided the denial has not
+        been revoked and no valid matching approval takes precedence (permanent denial still
+        blocks first). Revocation atomically suppresses unclaimed delivery and retains the reason.
         Auth: acting user principal from the browser auth layer; principal must match.
       requestBody:
         required: false
@@ -111,9 +132,12 @@ paths:
         "400":
           description: |
             Invalid UUID (`bad_request`), invalid JSON or `persistence` (`bad_request`), or an
-            invalid `denial_reason` (`invalid_denial_reason`): not a string, more than 500 Unicode
-            code points, contains U+0000, or a request body larger than 16 KiB. The approval is
-            unchanged. The error description never repeats the submitted text.
+            invalid `denial_reason` (`invalid_denial_reason`): a value other than string or null, nonblank text
+            exceeding 500 Unicode code points after absence normalization, contains U+0000,
+            or a request body larger than 16 KiB. Empty/all-whitespace input is normalized to
+            absence before length validation (including 501 whitespace code points); the body
+            bound applies independently to every request. The approval is unchanged.
+            The error description never repeats the submitted text.
           content:
             application/json:
               schema:
@@ -144,10 +168,15 @@ components:
         denial_reason:
           type: string
           nullable: true
-          maxLength: 500
+          anyOf:
+            - maxLength: 500
+            - pattern: '^[\u0009-\u000D\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*$'
           description: |
-            Optional. Omitted, null, empty, or whitespace-only means no reason. Any other value is
-            stored exactly as submitted, including surrounding whitespace.
+            Optional. Omitted, null, empty, or whitespace-only (Go unicode.IsSpace) means no
+            reason, normalized before nonblank length validation. The pattern branch permits
+            all-whitespace strings longer than 500 code points; the independent 16-KiB body
+            bound still applies. Any nonblank value is limited to 500 code points and stored
+            exactly as submitted, including surrounding whitespace. U+0000 is rejected.
 
     DenyResponse:
       type: object
@@ -173,8 +202,8 @@ components:
           description: Present only on a denied approval whose owner supplied a reason.
 
     ToolApprovalSummary:
-      # Existing sync schema; two properties added. The reason itself is never synchronized.
-      required: [expires_at]
+      # Existing sync schema; three properties added. The reason itself is never synchronized.
+      required: [expires_at, denial_delivery_pending]
       properties:
         expires_at:
           type: string
@@ -184,7 +213,10 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: Time at which the denied outcome was delivered to the requesting agent; absent if undelivered.
+          description: Time the broker claimed the denied outcome for at-most-once delivery; absent if unclaimed, not an acknowledgement.
+        denial_delivery_pending:
+          type: boolean
+          description: True only for a new unclaimed user denial; false after claim or permanent revocation and for historical records. No reason content.
 
     DeliveryClaimRequest:
       type: object

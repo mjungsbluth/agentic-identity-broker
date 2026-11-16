@@ -21,21 +21,24 @@ approval denial, and deliver it once to the requesting agent with the denied out
   approval reads return it to the owner. Invalid input returns `400 invalid_denial_reason` and
   leaves the approval pending ([R3](./research.md#r3--browser-and-non-browser-input-contract)).
 - **Agent delivery.** When the agent repeats the original `tools/call` before the approval's
-  `expires_at`, the ExtProc gate claims the denied decision through the new dual-auth gateway
+  `expires_at`, while the denial is unrevoked and no matching approval takes precedence under
+  FR-009, the ExtProc gate claims the denied decision through the new dual-auth gateway
   endpoint `POST /api/approvals/deliveries` and answers with an MCP tool error result that
-  contains the reason. Each decision is delivered at most once; later calls keep today's behavior
+  contains the reason. Each decision is delivered at most once; subsequent calls keep today's behavior
   (accepted FR-010) ([R4–R6](./research.md#r4--how-the-requesting-agent-receives-the-outcome),
   [agent contract](./contracts/extproc-denied-outcome.md)).
-- **Sync.** Summaries add `expires_at` and `denial_delivered_at` so the gate calls the broker only
-  while an undelivered denial exists; the reason never enters the sync snapshot.
-- **Persistence.** Atomic migration `048` adds two nullable columns, two check constraints, and a
-  partial index; both adapters implement the atomic deny and claim ([R7](./research.md#r7--persistence)).
+- **Sync.** Summaries add `expires_at`, `denial_delivered_at`, and `denial_delivery_pending` so
+  the gate calls the broker only while an undelivered, unrevoked denial exists; the reason never
+  enters sync.
+- **Persistence.** Atomic migration `048` adds two nullable columns, a false-default
+  delivery-pending flag, three check constraints, and a partial index; both adapters implement
+  atomic deny, claim, and revocation suppression ([R7](./research.md#r7--persistence)).
 - **Confidentiality.** No log, span, metric, or error carries the reason; LOGGING.md §6.1 gains
   the rule ([R8–R9](./research.md#r8--logging-tracing-and-metrics)).
 - **UI.** Both denial surfaces get an accessible optional-reason form and a read-only recorded
   reason ([R10](./research.md#r10--frontend-interaction)).
 - **Decision record.** Draft
-  [ADR 20261116-191554](./20261116-191554-tool-approval-denial-reason-delivery.md) (Proposed).
+  [ADR 20261116-191554-tool-approval-denial-reason-delivery](./20261116-191554-tool-approval-denial-reason-delivery.md) (Proposed).
 
 ## Technical Context
 
@@ -83,7 +86,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **Domain Concepts**: Implementation adds **Denial Reason** and **Decision Delivery** to the
   `ARCHITECTURE.md` glossary and the root `AGENTS.md` glossary, and extends the
   `ApprovalDenied` event text.
-- [x] **Entity IDs**: No new entity; `id.ApprovalID` exists (ADR 013).
+- [x] **Entity IDs**: No new entity; `id.ApprovalID` exists (ADR 013-strongly-typed-entity-ids).
 - [x] **Configuration Design**: No configuration key changes. The delivery window reuses each
   approval's existing `expires_at`.
 - [x] **Config Examples**: Not applicable.
@@ -113,7 +116,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
   reason is untrusted text everywhere (SR-001–SR-004).
 - [x] **Architecture Docs**: `ARCHITECTURE.md` approval sections (endpoint list, gate order, sync
   fields, glossary) and the ADR index in the root `AGENTS.md`.
-- [x] **ADRs**: Draft [ADR 20261116-191554](./20261116-191554-tool-approval-denial-reason-delivery.md)
+- [x] **ADRs**: Draft [ADR 20261116-191554-tool-approval-denial-reason-delivery](./20261116-191554-tool-approval-denial-reason-delivery.md)
   (Proposed) extends `018-approval-endpoint-auth-boundaries` and
   `036-extproc-approval-cache-and-gate` without deviating from them. Implementation moves it to
   `adrs/` after approval.
@@ -126,7 +129,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
   (`DenialReason`, `ToolApproval`, `approval.Service`); handlers parse and map errors; adapters
   implement ports; ExtProc talks to the broker only over HTTP.
 - [x] **Persistence Patterns**: ISP port `ToolApprovalDeliveryRepository`; memory and PostgreSQL
-  adapters; `StorageError` wrapping (ADR 004).
+  adapters; `StorageError` wrapping (ADR 004-storage-layer-architecture).
 - [x] **Coding standards**: LOGGING.md and OPENTELEMETRY.md review checklists apply to the new
   audit record and span; safety tests assert the reason is absent from logs and spans.
   [contracts/observability.md](./contracts/observability.md) specifies the event, span families,
@@ -210,8 +213,10 @@ renderer → SPA → docs and glossary.
 
 ### End-to-End (E2E) Acceptance Tests
 
-**Test Location**: `tests/e2e/approval_denial_reason_test.go` (broker + in-process ExtProc through
-`bootstrap.ExtProcEnvironment`, as in `tests/e2e/extproc_approval_journey_test.go`).
+**Test Locations**: Ten backend scenarios in `tests/e2e/approval_denial_reason_test.go` (broker +
+in-process ExtProc through `bootstrap.ExtProcEnvironment`, as in
+`tests/e2e/extproc_approval_journey_test.go`); three browser scenarios in
+`tests/e2e/frontend/approval_denial_reason_test.go` using the existing frontend lifecycle.
 
 **Framework**: Ginkgo/Gomega, `Describe("Tool approval denial reasons")` → `Context` per user story → one `It` per scenario.
 
@@ -229,9 +234,9 @@ renderer → SPA → docs and glossary.
 | User Story 3, Scenario 2 | `tests/e2e/approval_denial_reason_test.go` | `It("keeps the first decision and reason on any later deny attempt")` |
 | User Story 3, Scenario 3 | `tests/e2e/approval_denial_reason_test.go` | `It("records no reason for expired or approved approvals and keeps only the winner's reason under competing decisions")` |
 | User Story 3, Scenario 4 | `tests/e2e/approval_denial_reason_test.go` | `It("returns the same decision and reason after a PostgreSQL broker restart and delivers it once", Label("docker"))` |
-| User Story 3, Scenario 5 | `tests/e2e/approval_denial_reason_test.go` | `It("keeps the reason out of broker and ExtProc logs, spans, and metrics in successful and rejected journeys")` |
+| User Story 3, Scenario 5 | `tests/e2e/frontend/approval_denial_reason_test.go` | `It("keeps the reason out of browser, broker, and ExtProc logs, spans, and metrics in successful and rejected journeys")` |
 | User Story 3, Scenario 6 | `tests/e2e/frontend/approval_denial_reason_test.go` | `It("stores markup-like reasons as data and renders them literally")` |
-| User Story 3, Scenario 7 | `tests/e2e/approval_denial_reason_test.go` | `It("blocks later calls after a delivered permanent denial without a reason while the owner can still read it")` |
+| User Story 3, Scenario 7 | `tests/e2e/approval_denial_reason_test.go` | `It("blocks later permanent-denial calls without a reason and suppresses unclaimed delivery on revocation while retaining the owner's reason")` |
 
 *Line numbers are added when the tests are written (Phase 2).*
 
@@ -266,7 +271,13 @@ reuse `tests/e2e/helpers/approval_types.go` with `DenialReason` fields.
 | Recorded denial with reason | Scenario 1.2 | `tests/e2e/screenshots/approval_denial_recorded_reason.png` |
 | Literal markup display | Scenario 3.6 | `tests/e2e/screenshots/approval_denial_literal_markup.png` |
 
-Each frontend test also fails on any browser console message containing the submitted reason.
+Scenario 3.5 is the single full browser/broker/ExtProc privacy journey. It uses the frontend
+suite's existing Playwright lifecycle, production broker, and test-only in-process ExtProc
+bootstrap with captured broker/gateway logs, spans, and metrics; no browser lifecycle is added
+to the backend suite. Capture successful and rejected submissions and delivery failures, then
+assert no reason content in any component's operational signals and permitted non-content audit
+metadata. Scenarios 1.2 and 3.6 also retain console-safety assertions, without duplicating 3.5.
+Each frontend test fails on any browser console message containing the submitted reason.
 Capture with `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend`;
 the harness writes `tests/e2e/frontend/coverage/screenshots/`, and the existing screenshot
 workflow publishes captures to the paths above. Include each meaningful state on both denial
@@ -274,20 +285,25 @@ surfaces, using surface-specific filenames when a state occurs on both pages.
 
 ### Unit & Integration Tests
 
-- **Domain**: `DenialReason` absence, exact retention, 500/501 code points (`é`, emoji), U+0000,
+- **Domain**: `DenialReason` absence before length validation (including 501 whitespace code
+  points), exact retention, nonblank 500/501 code points (`é`, emoji), U+0000,
   redaction through `slog`, `%v`, `%#v`; `ToolApproval.Deny` invariants; service deny and claim
   paths, including ownership, expiry, competing decisions, and audit record content.
 - **Handlers**: deny body parsing (types, size limit, error codes without echo), read models,
-  sync summary fields, delivery handler status mapping.
+  sync summary fields, delivery handler status mapping including constant `500 internal_error`
+  for claim/storage timeout, connection, and unexpected service failures without content echo.
 - **Adapters**: memory and PostgreSQL deny with reason, claim once under concurrency, newest
-  selection, window, `approved_at` exclusion, column lists.
+  selection, window, `approved_at` exclusion and delivery-pending eligibility, column lists; deny-permanently →
+  revoke → repeat before expiry separately from revoked grants, with claim/revoke lock-order races.
 - **Migration**: `048` up, down, reapply; constraint rejection of a reason on non-denied rows.
 - **ExtProc**: cache candidate detection, client claim (200/204/errors, no logging of body), gate
-  order (permanent with/without candidate, approved precedence, read-then-claim, fail closed),
+  order (permanent with/without candidate, approved precedence over temporary denial,
+  grant/revocation overlap races under existing freshness semantics, read-then-claim, fail closed),
   server rendering of the MCP result, and a safety test asserting the reason is absent from logs,
   spans, and diagnostics.
 - **SPA**: `DenialReasonForm` accessibility (label, `aria-describedby` count and error, keyboard),
-  count by code points, cancel discards, error retains text; both pages send `denial_reason`;
+  count by code points, 501 whitespace code points normalize to absence before nonblank length
+  validation on both pages, cancel discards, error retains text; both pages send `denial_reason`;
   confirmation renders literally and omits an empty heading.
 
 **Test Coverage Goals**: All acceptance scenarios (13) in E2E; all new domain branches in unit
@@ -297,16 +313,16 @@ tests; both adapters for every new repository method.
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-DENY | API | `POST /api/approvals/{id}/deny` accepts optional `denial_reason` (≤500 code points; blank means none; U+0000, non-string, or body >16 KiB → `400 invalid_denial_reason` without echo) and `DenyResponse` returns it | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:82-165 |
-| API-READ | API | `ToolApprovalDetail` (get, pending, permanent) adds owner-visible `denial_reason`, present only when recorded | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:167-173 |
-| API-SYNC | API | `ToolApprovalSummary` adds `expires_at` and nullable `denial_delivered_at`; the reason is never synchronized | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:175-187 |
-| API-DELIVER | API | New gateway endpoint `POST /api/approvals/deliveries` with subject token + client assertion: claims the newest undelivered, never-approved denial for the caller's pair, tool, and arguments hash before `expires_at`; `200` with decision and reason, `204` when none | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:11-80 |
-| API-MCP | API | Agent receives the delivered denial as HTTP 200 MCP `CallToolResult` with `isError: true`, fixed text containing the reason, and `_meta["io.agentic-identity-broker/tool-approval"]`; delivery failures return 403 `approval decision could not be delivered` | specs/20261116-181338-approval-denial-reason/contracts/extproc-denied-outcome.md:9-89 |
-| API-VERSION | API | End-User API `info.version` `1.2.0` → `1.3.0` | specs/20261116-181338-approval-denial-reason/research.md:256-264 |
-| ADR-DELIVERY | ADR | Draft ADR 20261116-191554: denial reason on `ToolApproval`, at-most-once delivery on the agent's repeat of the original invocation via a dual-auth claim, reason excluded from sync and telemetry | specs/20261116-181338-approval-denial-reason/20261116-191554-tool-approval-denial-reason-delivery.md:1-136 |
-| DEC-DELIVERY | Decision | Deliver each denied outcome to the agent at most once, on its first repeat of the original invocation before `expires_at`; a lost response is not redelivered; FR-007, FR-008, Scenarios 3.4 and 3.7, and SC-006 revised accordingly | specs/20261116-181338-approval-denial-reason/research.md:80-124 |
-| DEC-TEMP | Decision | Behavior change: after a temporary denial, the agent's first repeat of the original call receives the denied outcome instead of a new approval prompt | specs/20261116-181338-approval-denial-reason/spec.md:38-40 |
-| DB-048 | Decision | Migration `048`: nullable `denial_reason TEXT` and `denial_delivered_at TIMESTAMPTZ`, two check constraints, partial index; no backfill; DOWN discards recorded reasons; reasons stored as plaintext like tool arguments | specs/20261116-181338-approval-denial-reason/data-model.md:82-128 |
+| API-DENY | API | `POST /api/approvals/{id}/deny` accepts optional `denial_reason` (normalize whitespace to absence before limiting nonblank text to 500 code points, including 501 whitespace code points; U+0000, non-string/non-null, or body >16 KiB → `400 invalid_denial_reason` without echo) and `DenyResponse` returns it | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:101-194 |
+| API-READ | API | `ToolApprovalDetail` (get, pending, permanent) adds owner-visible `denial_reason`, present only when recorded | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:196-202 |
+| API-SYNC | API | `ToolApprovalSummary` adds `expires_at`, nullable `denial_delivered_at`, and required `denial_delivery_pending` (false for historical, claimed, or revoked decisions); the reason is never synchronized | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:204-219 |
+| API-DELIVER | API | New gateway endpoint `POST /api/approvals/deliveries` with subject token + client assertion: claims the newest undelivered, unrevoked, never-approved denial for the caller's pair, tool, and arguments hash before `expires_at`; `200` with decision and reason, `204` when none, constant `500 internal_error`/`failed to deliver approval decision` for claim/storage failures; committed-but-lost responses stay claimed | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:11-99 |
+| API-MCP | API | Agent receives the delivered denial as HTTP 200 MCP `CallToolResult` with `isError: true`, fixed text containing the reason, and `_meta["io.agentic-identity-broker/tool-approval"]`; delivery failures return 403 `approval decision could not be delivered` | specs/20261116-181338-approval-denial-reason/contracts/extproc-denied-outcome.md:9-101 |
+| API-VERSION | API | End-User API `info.version` `1.2.0` → `1.3.0` | specs/20261116-181338-approval-denial-reason/research.md:297-305 |
+| ADR-DELIVERY | ADR | Draft ADR 20261116-191554-tool-approval-denial-reason-delivery: denial reason on `ToolApproval`, at-most-once delivery on the agent's repeat of the original invocation via a dual-auth claim, reason excluded from sync and telemetry | specs/20261116-181338-approval-denial-reason/20261116-191554-tool-approval-denial-reason-delivery.md:1-160 |
+| DEC-DELIVERY | Decision | Deliver each new denied outcome to the agent at most once (historical records excluded), on its first eligible repeat of the original invocation before `expires_at`; revocation suppresses unclaimed delivery, while claims committed first may be in flight; valid matching approvals retain precedence over temporary denials under existing freshness semantics; a lost response is not redelivered | specs/20261116-181338-approval-denial-reason/research.md:87-147 |
+| DEC-TEMP | Decision | Behavior change: after a temporary denial, the agent's first eligible repeat of the original call receives the denied outcome instead of a new approval prompt, unless a valid matching approval authorizes it | specs/20261116-181338-approval-denial-reason/spec.md:38-40 |
+| DB-048 | Decision | Migration `048`: nullable `denial_reason TEXT`, `denial_delivered_at TIMESTAMPTZ`, and `denial_delivery_pending BOOLEAN NOT NULL DEFAULT FALSE`, three check constraints, partial index excluding revoked records; no backfill; DOWN discards all three new fields; reasons stored as plaintext like tool arguments | specs/20261116-181338-approval-denial-reason/data-model.md:96-153 |
 
 Implementation must not start any item above until the maintainer's 👍 on the approval comment
 covers it. The implementation phase then records that approval in the ADR's Status line and moves
@@ -314,10 +330,13 @@ the draft to `adrs/20261116-191554-tool-approval-denial-reason-delivery.md`.
 
 ## Task integration details
 
-- Scenario 3.5's backend `It()` must include a real browser denial submission before the broker
-  and ExtProc checks. A test-only browser lifecycle wrapper in
-  `tests/e2e/bootstrap/denial_reason_browser.go` reuses the Playwright setup patterns and captures
-  browser console output; an API-only journey does not cover browser signal safety.
+- Scenario 3.5's canonical `It()` lives in `tests/e2e/frontend/approval_denial_reason_test.go`
+  and includes real browser submission before broker and ExtProc signal assertions. Reuse the
+  existing frontend browser/context cleanup, never a backend browser wrapper. Test-only shared
+  bootstrap may expose log/span/metric capture and ExtProc calls, but owns no browser lifecycle.
+- Scenario 1.1 includes valid-approval/temporary-denial overlap and synchronized grant/revocation
+  race variants; Scenario 3.7 includes revoke-before-delivery and claim/revoke lock-order variants,
+  separate from revoking a previous grant. Keep one canonical `It()` per existing scenario.
 - When implementation moves the approved ADR into `adrs/`, leave a link-only redirect at the
   feature-local draft path so links from the frozen specification and plan still resolve.
 - `tasks.md` orders the two P1 stories (US1, then US3) before the P2 compatibility story (US2).
