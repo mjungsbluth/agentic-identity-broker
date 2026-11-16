@@ -32,8 +32,15 @@ function eligible(pr, repo) {
   return pr.state === "open" && !pr.merged_at && pr.head.repo?.full_name === slug && pr.base.repo?.full_name === slug;
 }
 
-function feature(pr) {
-  return pr.body?.match(/<!-- speckit-feature: (specs\/[a-zA-Z0-9][a-zA-Z0-9-]*) -->/)?.[1] ?? null;
+// Safe outputs strip HTML comments from agent-written PR bodies, so the specification link names the feature too.
+function feature(pr, repo) {
+  const body = pr.body || "";
+  const marked = body.match(/<!-- speckit-feature: (specs\/[a-zA-Z0-9][a-zA-Z0-9-]*) -->/)?.[1];
+  if (marked) return marked;
+  const prefix = `Specification: https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.ref}/`;
+  const links = body.split(/\r?\n/).filter((line) => line.startsWith(prefix));
+  const target = links.length === 1 ? links[0].slice(prefix.length).trim() : "";
+  return target.match(/^(specs\/[a-zA-Z0-9][a-zA-Z0-9-]*)\/spec\.md$/)?.[1] ?? null;
 }
 
 function quoted(text) {
@@ -91,7 +98,7 @@ async function prepare({ github, context, inputs }) {
   const data = {
     run: `${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`, repository: `${repo.owner}/${repo.repo}`,
     pr: pr.number, head: pr.head.sha, branch: pr.head.ref, base: pr.base.ref, base_sha: pr.base.sha,
-    feature: feature(pr), focus: "",
+    feature: feature(pr, repo), focus: "",
   };
   if (Number(inputs.comment)) {
     data.command = await maintainerCommand(github, repo, Number(inputs.comment), pr.number);
