@@ -10,7 +10,7 @@ No new entity or entity ID. The feature extends the existing `ToolApproval` aggr
 | Field | Type | Rule |
 |---|---|---|
 | `DenialReason` | `*DenialReason` (`denial_reason TEXT NULL`) | Set only by `Deny`, in the same transition as `Status=denied`. Never set for pending or approved records. Never changed afterwards. |
-| `DenialDeliveredAt` | `*time.Time` (`denial_delivered_at TIMESTAMPTZ NULL`) | Set once by `ClaimDenialDelivery` when the requesting agent receives the denied outcome. Only for denied records. |
+| `DenialDeliveredAt` | `*time.Time` (`denial_delivered_at TIMESTAMPTZ NULL`) | Set once by `ClaimDenialDelivery` when the broker claims the denied outcome for delivery. Only for denied records; this is not an agent acknowledgement. |
 
 All existing fields and their meaning are unchanged, including `Persistence`, `ParamsPattern`
 clearing on permanent denial, `ExpiresAt`, and `RevokePermanent`.

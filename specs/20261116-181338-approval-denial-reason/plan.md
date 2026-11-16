@@ -129,6 +129,8 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
   adapters; `StorageError` wrapping (ADR 004).
 - [x] **Coding standards**: LOGGING.md and OPENTELEMETRY.md review checklists apply to the new
   audit record and span; safety tests assert the reason is absent from logs and spans.
+  [contracts/observability.md](./contracts/observability.md) specifies the event, span families,
+  existing gate metric, and safety assertions; it adds no metric or attribute namespace.
 
 **Post-design re-check (after Phase 1)**: All blocking design preconditions pass except the API
 confirmation gate, which is the expected sign-off. No violation needs Complexity Tracking.
@@ -146,7 +148,8 @@ specs/20261116-181338-approval-denial-reason/
 ├── quickstart.md              # Phase 1
 ├── contracts/
 │   ├── enduser-approvals-openapi.yaml   # End-User API 1.3.0 delta
-│   └── extproc-denied-outcome.md        # Agent-facing MCP result
+│   ├── extproc-denied-outcome.md        # Agent-facing MCP result
+│   └── observability.md                 # Content-free audit, spans, and safety tests
 ├── 20261116-191554-tool-approval-denial-reason-delivery.md   # ADR draft (Proposed)
 ├── checklists/requirements.md
 ├── wireframes/
@@ -264,6 +267,10 @@ reuse `tests/e2e/helpers/approval_types.go` with `DenialReason` fields.
 | Literal markup display | Scenario 3.6 | `tests/e2e/screenshots/approval_denial_literal_markup.png` |
 
 Each frontend test also fails on any browser console message containing the submitted reason.
+Capture with `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend`;
+the harness writes `tests/e2e/frontend/coverage/screenshots/`, and the existing screenshot
+workflow publishes captures to the paths above. Include each meaningful state on both denial
+surfaces, using surface-specific filenames when a state occurs on both pages.
 
 ### Unit & Integration Tests
 
@@ -304,6 +311,17 @@ tests; both adapters for every new repository method.
 Implementation must not start any item above until the maintainer's 👍 on the approval comment
 covers it. The implementation phase then records that approval in the ADR's Status line and moves
 the draft to `adrs/20261116-191554-tool-approval-denial-reason-delivery.md`.
+
+## Task integration details
+
+- Scenario 3.5's backend `It()` must include a real browser denial submission before the broker
+  and ExtProc checks. A test-only browser lifecycle wrapper in
+  `tests/e2e/bootstrap/denial_reason_browser.go` reuses the Playwright setup patterns and captures
+  browser console output; an API-only journey does not cover browser signal safety.
+- When implementation moves the approved ADR into `adrs/`, leave a link-only redirect at the
+  feature-local draft path so links from the frozen specification and plan still resolve.
+- `tasks.md` orders the two P1 stories (US1, then US3) before the P2 compatibility story (US2).
+  US1 is a candidate MVP slice, not a release that can omit privacy or compatibility gates.
 
 ## Complexity Tracking
 
