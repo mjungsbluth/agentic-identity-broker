@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "cursors": {
+    "labelling_after": null,
+    "investigation_after": null
+  },
+  "issues": [
+    {
+      "number": 4,
+      "state": "commented",
+      "updated_at": "2026-11-16",
+      "note": "Investigated scheduled scan; targeted docs XML-parser fix committed and draft PR queued. Full verify blocked by OSV API TLS validation; no scanner exemptions changed."
+    }
+  ],
+  "fixes": [
+    {
+      "issue": 4,
+      "pr": null,
+      "branch": "repo-assist/fix-issue-4-docs-xml-parser",
+      "status": "open",
+      "updated_at": "2026-11-16",
+      "note": "Draft PR submission prepared (dab51be). fast-xml-parser 5.12.0 plus three required transitive updates. Check/build/test/docs build pass; verify stops at OSV API TLS failure. Resolve live PR by branch next run."
+    }
+  ],
+  "checks": [
+    {
+      "area": "dependencies",
+      "checked_at": "2026-11-16",
+      "result": "#4: scan reports docs fast-xml-parser 5.11.1; lockfile upgraded to 5.12.0. No Dependabot PRs or other Repo Assist PRs open.",
+      "follow_up": "Confirm the queued draft PR is published and rerun OSV in CI."
+    },
+    {
+      "area": "docs",
+      "checked_at": "2026-11-16",
+      "result": "Task 7 QA: inspected Docusaurus README, config and just recipes; clean npm ci and production docs build pass. Build emits CSS minimizer warning; no docs change bundled with dependency fix.",
+      "follow_up": null
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-16",
+      "result": "just check, just build and just test pass. Full just verify stops in security at OSV API TLS certificate validation; remaining tiers not reached.",
+      "follow_up": "Complete full verification in CI; never disable TLS verification."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-16",
+      "result": "No existing Repo Assist PRs. Issue #5 has active spec-driven draft #6; avoid duplicate implementation. Issue #3 smoke-test question already answered.",
+      "follow_up": null
+    },
+    {
+      "area": "release",
+      "checked_at": "2026-11-16",
+      "result": "Documentation transitive dependency fix alone does not warrant a separate release-preparation PR on this workflow-testing fork.",
+      "follow_up": null
+    }
+  ],
+  "completed_actions": [],
+  "priorities": [
+    {
+      "task": 6,
+      "item": "issue-4-docs-xml-parser",
+      "note": "Find PR by branch repo-assist/fix-issue-4-docs-xml-parser; record its number and inspect check runs plus statuses, especially OSV and remaining verification tiers."
+    }
+  ]
+}
