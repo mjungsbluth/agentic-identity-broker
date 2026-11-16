@@ -203,6 +203,7 @@ jobs:
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   # A completed clarification continues into planning only once a plan exists; the first spec is reviewed by hand.
+  # Answers the worker chose itself go to the clarification comment and wait for a maintainer's 👍 instead.
   clarified:
     needs: clarify
     if: always() && needs.clarify.result == 'success'
@@ -214,7 +215,7 @@ jobs:
       pull-requests: read
     outputs:
       plan: ${{ steps.status.outputs.plan }}
-      error: ${{ steps.status.outputs.error }}
+      error: ${{ steps.status.outputs.error || steps.publish.outputs.error }}
     steps:
       - name: Checkout trusted automation only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -233,6 +234,32 @@ jobs:
             try {
               const result = await verify({ github, context, comment: process.env.RESULT_COMMENT, phase: 'clarify' });
               core.setOutput('plan', String(continuesToPlan(result)));
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+      - name: Publish the clarification comment
+        id: publish
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT_COMMENT: ${{ needs.clarify.outputs.comment_id }}
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: |
+            const { publishClarifications } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await publishClarifications({ github, context, comment: process.env.RESULT_COMMENT });
             } catch (error) {
               core.setOutput('error', error.message);
               throw error;

@@ -96,8 +96,10 @@ After the feature section, include:
   using the new feature's actual relative directory.
 - A short "Maintainer commands" section with these one-line entries. A command
   must start a new PR comment.
-  - After the automatic clarification, review the specification and comment
-    `/speckit-plan [guidance]`. The pipeline then plans, writes tasks,
+  - After the automatic clarification, review the specification and the
+    clarification comment's recommended answers. React with 👍 to that comment
+    to accept the answers, or comment `/speckit-clarify <answer>` to choose
+    another one. Then comment `/speckit-plan [guidance]`. The pipeline then plans, writes tasks,
     analyzes, and remediates on its own, posts one approval comment listing
     the API changes, ADRs, and consequential decisions with links to them,
     and ends planning with an architecture review of the planning artifacts.

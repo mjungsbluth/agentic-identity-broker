@@ -13,6 +13,7 @@ const {
   prepare,
   verify,
   publishApprovals,
+  publishClarifications,
   announce,
   report,
   continuesToPlan,
@@ -80,6 +81,28 @@ function approvalComment(state = {}, overrides = {}) {
   return {
     id: 50, body: `## Spec Kit approval\n\nReact with 👍.\n\n<!-- speckit-approval: ${marker} -->\n`,
     html_url: "https://github.com/example/broker/pull/42#issuecomment-50",
+    issue_url: "https://api.github.com/repos/example/broker/issues/42",
+    user: { login: "github-actions[bot]", type: "Bot" }, updated_at: "2026-10-28T10:00:00Z", ...overrides,
+  };
+}
+
+const clarifiedSpec = "# Spec\n\n## Clarifications\n\n- Q1 recommended answer\n- Q1 alternative\n- Q2 recommended answer\n" +
+  "- Q2 first alternative\n- Q2 second alternative\n";
+
+function question(overrides = {}) {
+  return {
+    question: "Should a permanent denial's reason reach later blocked calls?",
+    answer: "No, only the original approval's decision", location: `${spec}/spec.md:5`,
+    alternatives: [{ option: "Yes, every later blocked call", location: `${spec}/spec.md:6` }],
+    ...overrides,
+  };
+}
+
+function clarificationComment(state = {}, overrides = {}) {
+  const marker = JSON.stringify({ clarify: 21, head: "a".repeat(40), items: 1, ...state });
+  return {
+    id: 22, body: `## Spec Kit clarification\n\nReact with 👍.\n\n<!-- speckit-clarification: ${marker} -->\n`,
+    html_url: "https://github.com/example/broker/pull/42#issuecomment-22",
     issue_url: "https://api.github.com/repos/example/broker/issues/42",
     user: { login: "github-actions[bot]", type: "Bot" }, updated_at: "2026-10-28T10:00:00Z", ...overrides,
   };
@@ -1254,6 +1277,152 @@ function resultCommand(context, draft, extra = {}) {
   });
   return { run, saved, published };
 }
+
+test("clarify results list each self-answered question with its recommended answer and alternatives", () => {
+  const extra = { [`${spec}/spec.md`]: clarifiedSpec };
+  const clarify = (draft) => resultCommand({ phase: "clarify" }, { status: "complete", report: "Clarified", ...draft }, extra);
+  assert.throws(clarify({}).run, /must list the questions it answered/);
+  for (const location of [`${spec}/spec.md:40`, `${spec}/missing.md:1`]) {
+    const missing = clarify({ clarifications: [question({ alternatives: [{ option: "Yes", location }] })] });
+    assert.throws(missing.run, /does not exist/);
+    assert.equal(missing.saved.length, 0);
+  }
+  const outside = clarify({ clarifications: [question({ location: "ARCHITECTURE.md:1" })] });
+  assert.throws(outside.run, /inside specs\/042-example\//);
+  const listed = clarify({ clarifications: [{ ...question(), note: "dropped" }] });
+  listed.run();
+  assert.deepEqual(listed.published("phase").clarifications, [question()]);
+  const none = clarify({ clarifications: [] });
+  none.run();
+  assert.deepEqual(none.published("phase").clarifications, []);
+  const planned = resultCommand({ phase: "plan" }, { status: "complete", report: "Planned", clarifications: [question()] }, extra);
+  planned.run();
+  assert.equal(planned.published("plan").clarifications, undefined);
+
+  assert.ok(parseResult(comment(result("clarify", { clarifications: [question()] }))));
+  for (const clarifications of [
+    [question({ alternatives: [] })],
+    [question({ answer: "No\nonly the original" })],
+    [question({ question: "x".repeat(301) })],
+    [question({ alternatives: [{ option: "Yes", location: "../spec.md:1" }] })],
+    Array.from({ length: 6 }, () => question()),
+  ]) {
+    assert.equal(parseResult(comment(result("clarify", { clarifications }))), null);
+  }
+  assert.equal(parseResult(comment(result("plan", { clarifications: [] }))), null);
+  assert.equal(continuesToPlan(result("clarify", { clarifications: [question()] })), false);
+  assert.equal(continuesToPlan(result("clarify", { clarifications: [] })), true);
+});
+
+test("the clarification comment tables each recommended answer with linked alternatives and replaces the last one", async () => {
+  const sha = "a".repeat(40);
+  const blob = (line) => `https://github.com/example/broker/blob/${sha}/${spec}/spec.md#L${line}`;
+  const second = question({
+    question: "Who | may read @team <b>?", answer: "The denying user", location: `${spec}/spec.md:7`,
+    alternatives: [{ option: "Any approver", location: `${spec}/spec.md:8` }, { option: "Admins", location: `${spec}/spec.md:9` }],
+  });
+  const clarified = posted(result("clarify", { clarifications: [question(), second] }), 21);
+  const stale = clarificationComment({ clarify: 15 }, { id: 30 });
+  const f = fixture("issue_comment", commandEvent(command("/speckit-clarify")), {
+    comments: [clarified, stale], extra: { [`${spec}/spec.md`]: clarifiedSpec },
+  });
+  await publishClarifications({ ...f, comment: "21" });
+  assert.deepEqual(f.deleted, [30]);
+  assert.equal(f.created[0].issue_number, 42);
+  assert.equal(f.created[0].body, [
+    "## Spec Kit clarification", "",
+    "React with 👍 to accept the 2 recommended answers below for commit `aaaaaaa`. Then comment `/speckit-plan`.", "",
+    "| Question | Recommended answer | Alternatives |",
+    "| --- | --- | --- |",
+    `| Q1 Should a permanent denial's reason reach later blocked calls? | [No, only the original approval's decision](${blob(5)}) | [Yes, every later blocked call](${blob(6)}) |`,
+    `| Q2 Who \\| may read @​team &lt;b>? | [The denying user](${blob(7)}) | [Any approver](${blob(8)}) · [Admins](${blob(9)}) |`,
+    "",
+    "To choose another answer, comment `/speckit-clarify` with your answer. " +
+      "The pipeline updates the specification and replaces this comment.",
+    "", `<!-- speckit-clarification: {"clarify":21,"head":"${sha}","items":2} -->`, "",
+  ].join("\n"));
+
+  const quiet = fixture("issue_comment", commandEvent(command("/speckit-clarify")), {
+    comments: [posted(result("clarify", { clarifications: [] }), 21), stale],
+  });
+  assert.equal(await publishClarifications({ ...quiet, comment: "21" }), null);
+  assert.deepEqual(quiet.deleted, [30]);
+  assert.equal(quiet.created.length, 0);
+
+  for (const [item, error] of [
+    [question({ location: "ARCHITECTURE.md:1" }), /must point into specs\/042-example\//],
+    [question({ alternatives: [{ option: "Later", location: `${spec}/spec.md:12` }] }), /past the end/],
+  ]) {
+    const bad = fixture("issue_comment", commandEvent(command("/speckit-clarify")), {
+      comments: [posted(result("clarify", { clarifications: [item] }), 21)], extra: { [`${spec}/spec.md`]: clarifiedSpec },
+    });
+    await assert.rejects(publishClarifications({ ...bad, comment: "21" }), error);
+    assert.equal(bad.created.length, 0);
+  }
+});
+
+test("/speckit-plan requires a maintainer 👍 on the clarification comment of the current clarification", async () => {
+  const clarified = comment(result("clarify", { clarifications: [question()] }), { id: 21 });
+  const plan = commandEvent(command("/speckit-plan"));
+  const routed = (comments, options = {}) => route(fixture("issue_comment", plan, { comments, ...options }));
+  await assert.rejects(routed([clarified]), /No clarification comment exists yet/);
+  await assert.rejects(routed([clarified, clarificationComment()]),
+    /Clarification pending: a maintainer must react with 👍 to https:\/\/github\.com\/example\/broker\/pull\/42#issuecomment-22/);
+  await assert.rejects(routed([clarified, clarificationComment({ clarify: 15 })]), /belongs to an earlier clarification/);
+  await assert.rejects(routed([clarified, clarificationComment()], { reactions: [thumbs("-1", { comment_id: 22 })] }),
+    /reacted 👎 to .*issuecomment-22\. Comment `\/speckit-clarify` with your answer/);
+  await assert.rejects(routed([clarified, clarificationComment()], {
+    reactions: [thumbs("+1", { comment_id: 22, user: { login: "contributor", type: "User" } })],
+    permissions: { maintainer: "write", contributor: "read" },
+  }), /Clarification pending/);
+  await assert.rejects(routed([clarified, clarificationComment()], {
+    reactions: [thumbs("+1", { comment_id: 22, created_at: "2026-10-28T09:00:00Z" })],
+  }), /Clarification pending/);
+  const approved = { reactions: [thumbs("+1", { comment_id: 22 })] };
+  assert.equal((await routed([clarified, clarificationComment()], approved)).action, "plan");
+  const label = fixture("pull_request_target", { action: "labeled", label: { name: "speckit:plan-execution" }, pull_request: { number: 42 } },
+    { comments: [clarified, clarificationComment()] });
+  await assert.rejects(route(label), /Clarification pending/);
+  assert.equal((await routed([comment(result("clarify", { clarifications: [] }), { id: 21 })])).action, "plan");
+});
+
+test("the status points to the clarification comment until its answers are accepted", async () => {
+  const needs = { route: { result: "success", outputs: { action: "clarify", pr: "42" } } };
+  const comments = [posted(result("clarify", { clarifications: [question()] }), 21), clarificationComment()];
+  const f = fixture("issue_comment", commandEvent(command("/speckit-clarify")), { comments });
+  await report({ ...f, needs });
+  const { body } = f.created[0];
+  assert.ok(body.startsWith("## Spec Kit · 👀 Specification ready for review\n"));
+  assert.ok(body.includes(`Review \`${spec}/spec.md\` and the 1 recommended answer in the ` +
+    `[clarification comment](${link(22)}): react with 👍 to accept it, then comment \`/speckit-plan [guidance]\`. ` +
+    "To choose another answer, comment `/speckit-clarify <answer>`."));
+
+  const plain = fixture("issue_comment", commandEvent(command("/speckit-clarify")), { comments: [posted(result("clarify"), 21)] });
+  await report({ ...plain, needs });
+  assert.ok(plain.created[0].body.includes(`Review \`${spec}/spec.md\`, then comment \`/speckit-plan [guidance]\` to plan`));
+});
+
+test("planning receives the accepted answers so it can record the maintainer's acceptance", async (t) => {
+  preparationIO(t);
+  const clarified = comment(result("clarify", { clarifications: [question()] }), { id: 21 });
+  const f = fixture("issue_comment", commandEvent(command("/speckit-plan")), {
+    comments: [clarified, clarificationComment(), command("/speckit-plan")],
+    reactions: [thumbs("+1", { comment_id: 22 })],
+  });
+  const data = await prepare({ ...f, inputs: { phase: "plan", pr: 42, comment: 20 } });
+  assert.deepEqual(data.clarification, {
+    url: "https://github.com/example/broker/pull/42#issuecomment-22", items: 1,
+    answers: [question()], approvers: [{ login: "maintainer", at: "2026-10-28T10:05:00Z" }],
+  });
+  const pending = fixture("issue_comment", commandEvent(command("/speckit-plan")), {
+    comments: [clarified, clarificationComment(), command("/speckit-plan")],
+  });
+  await assert.rejects(prepare({ ...pending, inputs: { phase: "plan", pr: 42, comment: 20 } }), /Clarification pending/);
+  const tasks = await prepare({ ...fixture("pull_request_target", {}, {
+    comments: [clarified, comment(result("plan"), { id: 23, body: comment(result("plan")).body.replace("speckit-phase", "speckit-plan") })],
+  }), inputs: { phase: "tasks", pr: 42 } });
+  assert.equal(tasks.clarification, undefined);
+});
 
 test("published results name the next step when blocked and list approval items after analysis", () => {
   const contract = `${spec}/contracts/api.yaml`;

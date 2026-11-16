@@ -13,6 +13,8 @@ const marker = "## Spec Kit result";
 const directory = "/tmp/gh-aw/speckit";
 const approvalKinds = { api: "API", adr: "ADR", decision: "Decision" };
 const approvalMarker = /^<!-- speckit-approval: (\{.*\}) -->$/m;
+const clarificationMarker = /^<!-- speckit-clarification: (\{.*\}) -->$/m;
+const maxClarifications = 5;
 // Safe outputs strip HTML comments from agent comments, so the review state travels in a visible JSON block.
 const reviewMarker = "## Architecture review result";
 const proposalMarker = /^<!-- speckit-proposal: (\{.*\}) -->$/m;
@@ -122,6 +124,21 @@ function validateResult(result) {
       approvalLocation(item.location);
     }
   }
+  if (result.clarifications !== undefined) {
+    if (result.phase !== "clarify" || !Array.isArray(result.clarifications) ||
+        result.clarifications.length > maxClarifications ||
+        (result.status !== "complete" && result.clarifications.length)) {
+      throw new Error("Invalid clarifications");
+    }
+    for (const item of result.clarifications) {
+      if (!reviewText(item?.question, 300) || !reviewText(item.answer, 300) || !Array.isArray(item.alternatives) ||
+          !item.alternatives.length || item.alternatives.length > 4 ||
+          item.alternatives.some((alternative) => !reviewText(alternative?.option, 200))) {
+        throw new Error("Invalid clarification");
+      }
+      for (const entry of [item, ...item.alternatives]) approvalLocation(entry.location);
+    }
+  }
   if (result.repair !== undefined && (result.phase !== "implement" || !Number.isSafeInteger(result.repair) ||
       result.repair < 1 || result.repair > maxRepairs)) {
     throw new Error("Invalid repair round");
@@ -138,9 +155,11 @@ function validateResult(result) {
 }
 
 // A maintainer reviews the first specification before any planning. Once a plan exists, a completed
-// clarification refreshes the plan, tasks, and analysis without another command.
+// clarification refreshes the plan, tasks, and analysis without another command, unless it answered
+// questions itself: those answers wait for the maintainer's 👍.
 function continuesToPlan(result) {
-  return result.phase === "clarify" && result.status === "complete" && Boolean(result.files[`${result.feature}/plan.md`]);
+  return result.phase === "clarify" && result.status === "complete" && Boolean(result.files[`${result.feature}/plan.md`]) &&
+    !result.clarifications?.length;
 }
 
 function approvalLocation(location) {
@@ -528,6 +547,7 @@ async function route({ github, context }) {
     await implementationGate(github, repo, pr, entries);
   } else {
     requireSpecification(entries, (await artifacts(github, repo, pr)).hashes);
+    await clarification(github, repo, pr, entries);
   }
   return routed(action);
 }
@@ -563,6 +583,8 @@ async function prepare({ github, context, inputs }) {
     }[inputs.phase];
     if (inputs.phase === "plan") {
       data.previous = requireSpecification(entries, current.hashes);
+      const accepted = await clarification(github, context.repo, pr, entries);
+      if (accepted) data.clarification = accepted;
     } else if (previous) {
       const upstream = latest(entries, previous);
       data.previous = upstream?.result;
@@ -737,22 +759,97 @@ async function approval(github, repo, pr, feature, reanalysis, entries) {
   }
   const record = { url: published.html_url, items: state.items, approvers: [] };
   if (!state.items) return record;
-  const since = Date.parse(published.updated_at);
-  const reactions = await github.paginate(github.rest.reactions.listForIssueComment,
-    { ...repo, comment_id: published.id, per_page: 100 });
-  for (const reaction of reactions) {
-    if (!["+1", "-1"].includes(reaction.content) || reaction.user?.type !== "User" ||
-        !(Date.parse(reaction.created_at) >= since) || !await maintainer(github, repo, reaction.user.login)) continue;
-    if (reaction.content === "-1") {
-      throw new Error(`Maintainer \`${reaction.user.login}\` reacted 👎 to ${published.html_url}. ` +
-        "Comment `/speckit-plan` with the requested change");
-    }
-    record.approvers.push({ login: reaction.user.login, at: reaction.created_at });
-  }
+  record.approvers = await signoffs(github, repo, published, "Comment `/speckit-plan` with the requested change");
   if (!record.approvers.length) {
     throw new Error(`Approval pending: a maintainer must react with 👍 to ${published.html_url}`);
   }
   return record;
+}
+
+// A maintainer's 👍 after the comment's last edit signs it off; any maintainer's 👎 vetoes it.
+async function signoffs(github, repo, published, change) {
+  const since = Date.parse(published.updated_at);
+  const reactions = await github.paginate(github.rest.reactions.listForIssueComment,
+    { ...repo, comment_id: published.id, per_page: 100 });
+  const approvers = [];
+  for (const reaction of reactions) {
+    if (!["+1", "-1"].includes(reaction.content) || reaction.user?.type !== "User" ||
+        !(Date.parse(reaction.created_at) >= since) || !await maintainer(github, repo, reaction.user.login)) continue;
+    if (reaction.content === "-1") {
+      throw new Error(`Maintainer \`${reaction.user.login}\` reacted 👎 to ${published.html_url}. ${change}`);
+    }
+    approvers.push({ login: reaction.user.login, at: reaction.created_at });
+  }
+  return approvers;
+}
+
+// The clarify worker answers its own questions so the specification stays complete. The clarification comment
+// lists those answers, and a maintainer's 👍 on it accepts them before planning builds on them.
+async function publishClarifications({ github, context, comment }) {
+  retryReads(github);
+  const { repo } = context;
+  const { posted, result, pr, current } = await publishedResult(github, context, comment, "clarify");
+  const items = result.status === "complete" ? result.clarifications || [] : [];
+  const lengths = {};
+  const link = async (text, location) => {
+    const { path: name, start, end } = approvalLocation(location);
+    if (!name.startsWith(`${current.feature}/`)) {
+      throw new Error(`Clarification locations must point into ${current.feature}/: ${name}`);
+    }
+    lengths[name] ??= (await readBlob(github, repo, pr.head.sha, name)).text.split("\n").length;
+    if (end > lengths[name]) throw new Error(`Clarification location is past the end of ${name}`);
+    const anchor = end === start ? `L${start}` : `L${start}-L${end}`;
+    const label = cell(text).replace(/[[\]]/g, "\\$&");
+    return `[${label}](https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.sha}/${name}#${anchor})`;
+  };
+  const rows = [];
+  for (const [index, item] of items.entries()) {
+    const alternatives = [];
+    for (const entry of item.alternatives) alternatives.push(await link(entry.option, entry.location));
+    rows.push(`| Q${index + 1} ${cell(item.question)} | ${await link(item.answer, item.location)} | ${alternatives.join(" · ")} |`);
+  }
+  for (const stale of await botComments(github, repo, pr.number, (body) => clarificationMarker.test(body))) {
+    await github.rest.issues.deleteComment({ ...repo, comment_id: stale.id });
+  }
+  if (!items.length) return null;
+  const state = { clarify: posted.id, head: pr.head.sha, items: items.length };
+  const answers = items.length === 1 ? "the 1 recommended answer" : `the ${items.length} recommended answers`;
+  const body = [
+    "## Spec Kit clarification", "",
+    `React with 👍 to accept ${answers} below for commit \`${pr.head.sha.slice(0, 7)}\`. Then comment \`/speckit-plan\`.`, "",
+    "| Question | Recommended answer | Alternatives |",
+    "| --- | --- | --- |",
+    ...rows, "",
+    "To choose another answer, comment `/speckit-clarify` with your answer. " +
+      "The pipeline updates the specification and replaces this comment.",
+    "", `<!-- speckit-clarification: ${JSON.stringify(state)} -->`, "",
+  ];
+  const { data } = await github.rest.issues.createComment({ ...repo, issue_number: pr.number, body: body.join("\n") });
+  return data;
+}
+
+async function clarification(github, repo, pr, entries) {
+  const clarify = latest(entries, ["clarify"]);
+  const answers = clarify?.result.clarifications || [];
+  if (!answers.length) return null;
+  const [published] = (await botComments(github, repo, pr.number, (body) => clarificationMarker.test(body)))
+    .sort((a, b) => b.id - a.id);
+  if (!published) throw new Error("No clarification comment exists yet. Comment `/speckit-clarify` to publish one");
+  let state;
+  try {
+    state = JSON.parse(published.body.match(clarificationMarker)[1]);
+  } catch {
+    throw new Error(`The clarification comment ${published.html_url} is malformed. Comment \`/speckit-clarify\` to replace it`);
+  }
+  if (state.clarify !== clarify.comment.id) {
+    throw new Error(`The clarification comment ${published.html_url} belongs to an earlier clarification. ` +
+      "Comment `/speckit-clarify` to replace it");
+  }
+  const approvers = await signoffs(github, repo, published, "Comment `/speckit-clarify` with your answer");
+  if (!approvers.length) {
+    throw new Error(`Clarification pending: a maintainer must react with 👍 to ${published.html_url}`);
+  }
+  return { url: published.html_url, items: answers.length, answers, approvers };
 }
 
 function runURL(repo, id) {
@@ -1276,9 +1373,18 @@ async function report({ github, context, needs }) {
     lines = ["Answer the questions with `/speckit-clarify <answers>`.", "", details(stages.clarify)];
   } else if (stages.clarify && !stages.plan) {
     title = "👀 Specification ready for review";
+    const answers = stages.clarify.result.clarifications?.length || 0;
+    const [card] = state.comments.filter((entry) => pipelineBot(entry.user) && clarificationMarker.test(entry.body || "") &&
+      !(entry.body || "").includes("<!-- gh-aw-agentic-workflow:")).sort((a, b) => b.id - a.id);
     lines = [
-      `Review \`${stages.clarify.result.feature}/spec.md\`, then comment \`/speckit-plan [guidance]\` to plan, ` +
-        "or `/speckit-clarify <change>` to revise the specification.", "", details(stages.clarify),
+      answers && card ?
+        `Review \`${stages.clarify.result.feature}/spec.md\` and the ` +
+          `${answers === 1 ? "1 recommended answer" : `${answers} recommended answers`} in the ` +
+          `[clarification comment](${card.html_url}): react with 👍 to accept ${answers === 1 ? "it" : "them"}, ` +
+          "then comment `/speckit-plan [guidance]`. To choose another answer, comment `/speckit-clarify <answer>`." :
+        `Review \`${stages.clarify.result.feature}/spec.md\`, then comment \`/speckit-plan [guidance]\` to plan, ` +
+          "or `/speckit-clarify <change>` to revise the specification.",
+      "", details(stages.clarify),
     ];
   } else {
     title = "Waiting for a command";
@@ -1353,6 +1459,23 @@ function writeResult() {
   if (analysis && !Array.isArray(draft.approvals)) {
     throw new Error("An analysis must list its approval items, even when there are none");
   }
+  if (context.phase === "clarify" && !Array.isArray(draft.clarifications)) {
+    throw new Error("A clarification must list the questions it answered, even when there are none");
+  }
+  const clarifications = context.phase === "clarify" ? draft.clarifications.map((item) => ({
+    question: item?.question, answer: item?.answer, location: item?.location,
+    alternatives: Array.isArray(item?.alternatives) ?
+      item.alternatives.map((entry) => ({ option: entry?.option, location: entry?.location })) : item?.alternatives,
+  })) : [];
+  for (const item of clarifications) {
+    for (const entry of [item, ...(Array.isArray(item.alternatives) ? item.alternatives : [])]) {
+      const { path: name, end } = approvalLocation(entry.location);
+      if (!name.startsWith(`${feature}/`)) throw new Error(`Clarification locations must be inside ${feature}/: ${entry.location}`);
+      if (!fs.existsSync(name) || localFile(name).split("\n").length < end) {
+        throw new Error(`Clarification location does not exist: ${entry.location}`);
+      }
+    }
+  }
   const approvals = analysis ? draft.approvals.map((item) => ({
     kind: item?.kind, title: item?.title, location: item?.location,
   })) : [];
@@ -1370,6 +1493,7 @@ function writeResult() {
     summary: draft.summary.trim(),
     ...(context.validation ? { repair: context.validation.round } : {}),
     ...(analysis ? { approvals } : {}),
+    ...(context.phase === "clarify" ? { clarifications } : {}),
     ...(draft.status === "blocked" ? { next_step: draft.next_step } : {}),
   });
   if (typeof draft.report !== "string" || !draft.report.trim()) throw new Error("A phase report is required");
@@ -1409,7 +1533,8 @@ function selectFeature() {
 }
 
 module.exports = {
-  artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, announce, report,
+  artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, publishClarifications,
+  announce, report,
   continuesToPlan, managedPR, validateReviewState, parseReview, latestReview, parseProposal, publishProposals,
   remediable, reviewDimensions, testTarget, dispatchTests, retryReads, pipelineBot,
 };
