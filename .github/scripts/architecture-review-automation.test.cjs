@@ -260,6 +260,29 @@ test("prepare writes the compact context and PR details with changed files and A
   assert.deepEqual(f.calls.map((call) => call.username), ["maintainer", "maintainer"]);
 });
 
+test("prepare finds the Spec Kit feature from the specification link when the marker was stripped", async (t) => {
+  t.mock.method(fs, "mkdirSync", () => undefined);
+  t.mock.method(fs, "writeFileSync", () => undefined);
+  const link = (target, branch = "feature/approvals", slug = "example/broker") =>
+    `Specification: https://github.com/${slug}/blob/${branch}/${target}`;
+  const featureOf = async (body) =>
+    (await prepare({ ...fixture("issue_comment", {}, { pr: { body } }), inputs: { pr: "42" } })).feature;
+  assert.equal(await featureOf(`## Feature\n\nSummary\n\n${link("specs/20261116-181338-approval-denial-reason/spec.md")}\n`),
+    "specs/20261116-181338-approval-denial-reason");
+  assert.equal(await featureOf(`<!-- speckit-feature: specs/054-approvals -->\n${link("specs/055-other/spec.md")}`),
+    "specs/054-approvals");
+  for (const body of [
+    link("specs/055-other/spec.md", "main"),
+    link("specs/055-other/spec.md", "feature/approvals", "outsider/broker"),
+    link("specs/055-other/plan.md"),
+    link("specs/../adrs/spec.md"),
+    `${link("specs/055-other/spec.md")}\n${link("specs/056-another/spec.md")}`,
+    "Summary",
+  ]) {
+    assert.equal(await featureOf(body), null, body);
+  }
+});
+
 test("prepare fails closed for non-maintainers, ineligible PRs, and forged command comments", async (t) => {
   t.mock.method(fs, "mkdirSync", () => undefined);
   t.mock.method(fs, "writeFileSync", () => undefined);
