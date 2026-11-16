@@ -1734,7 +1734,15 @@ function editEvent(before, after, sender = { login: "maintainer", type: "User" }
 
 test("/architecture-review on a managed PR routes to the review and fails visibly elsewhere", async () => {
   assert.deepEqual(parseCommand("/architecture-review session lifecycle"), { phase: "architecture-review", argument: "session lifecycle" });
-  const f = fixture("issue_comment", commandEvent(command("/architecture-review sessions")));
+  const planned = fixture("issue_comment", commandEvent(command("/architecture-review sessions")));
+  assert.deepEqual(await route(planned), { action: "planreview", issue: 7, pr: 42, comment: 20 });
+  const superseded = fixture("issue_comment", commandEvent(command("/architecture-review sessions")), {
+    comments: [comment(result("implement"), { id: 21 }), comment(result("clarify"), { id: 22 })],
+  });
+  assert.equal((await route(superseded)).action, "planreview");
+  const f = fixture("issue_comment", commandEvent(command("/architecture-review sessions")), {
+    comments: [comment(result("implement"), { id: 21 })],
+  });
   assert.deepEqual(await route(f), { action: "review", issue: 7, pr: 42, comment: 20 });
   await assert.rejects(route(fixture("issue_comment", commandEvent(command("/architecture-review"), { number: 7 }))),
     /\/architecture-review runs on a Spec Kit pull request/);
@@ -1947,8 +1955,23 @@ test("planning ends with an architecture review of the plan that /speckit-plan a
 
   const crashed = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
   await report({ ...crashed, needs: needs({ result: "failure", outputs: {} }) });
-  assert.ok(crashed.created[0].body.startsWith("## Spec Kit · ⛔ `planreview` failed\n"));
-  assert.ok(crashed.created[0].body.includes("### Next step\n\nThe architecture review step failed before publishing."));
+  assert.ok(crashed.created[0].body.startsWith("## Spec Kit · ✅ Ready to implement\n"));
+  assert.ok(crashed.created[0].body.includes("Nothing needs sign-off. Comment `/speckit-implement` to start implementation.\n\n" +
+    "Architecture review of the plan did not complete. Comment `/architecture-review` to run it again."));
+
+  const rerun = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments });
+  await report({ ...rerun, needs: {
+    route: { result: "success", outputs: { action: "planreview", pr: "42" } },
+    planreview: { result: "success", outputs: { comment_id: "22" } },
+    proposals: { result: "success", outputs: { comment_id: "", recommendation: "DISCUSS", questions: "1", remediable: "false" } },
+  } });
+  assert.ok(rerun.created[0].body.startsWith("## Spec Kit · ✅ Ready to implement\n"));
+  assert.ok(rerun.created[0].body.includes(`Architecture review of the plan: **DISCUSS**. [Read the review](${link(22)}).`));
+
+  const announced = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments });
+  await announce({ ...announced, needs: { route: { result: "success", outputs: { action: "planreview", pr: "42" } } } });
+  assert.ok(announced.created[0].body.startsWith("## Spec Kit · ⏳ Reviewing the plan's architecture\n"));
+  assert.ok(announced.updated[0].body.includes("Specified ✅ › **Planned ⏳** › Implemented ○ › Reviewed ○"));
 });
 
 const maintainerCommands = [
@@ -1965,8 +1988,9 @@ const maintainerCommands = [
   "- `/speckit-plan <change>` revises the specification and design and replaces the approval comment.",
   "- `/speckit-clarify [focus]` revisits the specification. Once a plan exists, it also refreshes the plan " +
     "and the approval comment.",
-  "- `/architecture-review [focus]` reviews the current commit again. After implementation, tick the items to apply " +
-    "in its remediation proposal, then tick **Apply the selected items**.",
+  "- `/architecture-review [focus]` reviews the plan again before implementation, and the current commit after it. " +
+    "A review after implementation posts a remediation proposal: tick the items to apply, then tick " +
+    "**Apply the selected items**.",
   "- Submit a review whose summary starts with `/speckit-clarify` or `/speckit-plan` to apply its inline comments " +
     "in that phase.",
 ].join("\n");

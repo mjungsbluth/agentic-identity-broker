@@ -210,16 +210,21 @@ test("Spec Kit's managed draft PRs are left to the Spec Kit pipeline", async () 
   assert.deepEqual(await route(ready), { action: "review", pr: 42, comment: 20 });
 });
 
-test("a calling workflow may pass the review focus, but a command comment wins", async (t) => {
+test("a calling workflow may pass the review focus, and a command comment adds the maintainer's focus to it", async (t) => {
   t.mock.method(fs, "mkdirSync", () => undefined);
   const written = {};
   t.mock.method(fs, "writeFileSync", (name, content) => { written[path.basename(String(name))] = JSON.parse(content); });
   const f = fixture("issue_comment", {}, { comments: [command("/architecture-review sessions")] });
   assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "0", focus: "  Verify the remediation " } })).focus,
     "Verify the remediation");
-  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "20", focus: "ignored" } })).focus, "sessions");
+  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "20", focus: " Review the plan " } })).focus,
+    "Review the plan\n\nThe maintainer's focus for this run: sessions");
+  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "20" } })).focus, "sessions");
+  const bare = fixture("issue_comment", {}, { comments: [command("/architecture-review")] });
+  assert.equal((await prepare({ ...bare, inputs: { pr: "42", comment: "20", focus: "Review the plan" } })).focus, "Review the plan");
   await assert.rejects(prepare({ ...f, inputs: { pr: "42", comment: "0", focus: "x".repeat(2001) } }), /Invalid review focus/);
-  assert.equal(written["context.json"].focus, "sessions");
+  await assert.rejects(prepare({ ...f, inputs: { pr: "42", comment: "20", focus: "x".repeat(2001) } }), /Invalid review focus/);
+  assert.equal(written["context.json"].focus, "Review the plan");
 });
 
 test("prepare writes the compact context and PR details with changed files and ADR provenance", async (t) => {
