@@ -45,8 +45,9 @@ Never stop to wait for such an item. Choose the option you recommend. Write it
 into the artifacts as Proposed, with its rationale and the main alternative.
 Register it in the `## Approval Items` section of `plan.md` as a table row
 `| ID | Type | Decision | Details |`, where Details is the `path:line` of the
-authoritative text. Before `plan.md` exists, mark it as an approval item in its
-Clarifications entry so planning registers it. Keep ADR drafts in
+authoritative text. An answer that the clarify phase chooses itself is signed
+off through the clarification comment instead, so it needs no approval item.
+Keep ADR drafts in
 `context.feature` with status Proposed. Never mark an ADR Accepted or record an
 approval yourself. The maintainer approves with a 👍 on the pipeline's approval
 comment, and implementation records that approval. Never edit an ADR under
@@ -60,22 +61,31 @@ references.
 ## clarify
 
 Run `/speckit-clarify` without stopping for questions. For each ambiguity the
-skill would ask about, choose the recommended answer. Record it under
-Clarifications with its rationale and the main alternative, and update all
-affected requirements, journeys, and examples. Apply the sign-off rules to
-consequential answers. Do not manufacture ambiguity. List the resolved
-questions and your answers in the report so the maintainer can scan them.
+skill would ask about, choose the recommended answer, and update all affected
+requirements, journeys, and examples. Do not manufacture ambiguity.
+
+Record each answer you chose under Clarifications as one entry: the question,
+the answer marked `(Proposed)`, its rationale, and each main alternative on a
+line of its own. List the same questions in `clarifications`, at most five,
+in the order of their entries. The workflow publishes them as the
+clarification comment, a table of each question, its recommended answer, and
+links to its alternatives. A maintainer's 👍 on that comment accepts all the
+answers, and planning then records the acceptance. These answers need no
+approval item.
 
 If `context.command.argument` is not empty, it is the maintainer's direction
 for the specification. Apply it, and prioritize that area. If
 `context.command.comments` exists, apply that review feedback to `spec.md` the
 same way. If `context.answer` exists, it answers questions that an earlier
 version of this pipeline asked. Apply those answers, and resolve any questions
-they leave open yourself.
+they leave open yourself. An answer that comes from the maintainer is already
+decided: record it without the `(Proposed)` marker and leave it out of
+`clarifications`.
 
 Return `complete` with an empty `questions` array. Do not plan. If `plan.md`
 does not exist yet, the maintainer reviews the specification next. Otherwise,
-planning starts automatically after this phase.
+planning starts automatically after this phase, unless `clarifications` lists
+answers that wait for the maintainer's 👍.
 
 ## plan
 
@@ -89,6 +99,13 @@ ADRs in the feature directory. Keep `## Approval Items` in `plan.md` complete
 and current, and remove items that no longer apply. Do not generate tasks or
 implementation. Return `complete` when the plan and its required artifacts are
 complete and consistent.
+
+`context.clarification`, when present, is the maintainer's acceptance of the
+clarify phase's answers: the clarification comment URL, the accepted
+`answers`, and the approving maintainers with the time of each approval.
+Change each accepted answer's `(Proposed)` marker under Clarifications to
+`(Accepted by <login> on <date>: <url>)`. Build the design on the accepted
+answers, and change one only when `context.command` directs it.
 
 ## tasks
 
@@ -244,6 +261,7 @@ Write `/tmp/gh-aw/speckit/result.json` with this shape:
   "questions": [],
   "findings": [],
   "approvals": [],
+  "clarifications": [],
   "next_step": "",
   "checks": []
 }
@@ -268,6 +286,14 @@ summary, and the PR timeline already shows each pushed commit.
 and `approvals` contains every sign-off item as
 `{"kind":"api","title":"Adds the agent_subject_expression setting","location":"specs/054-example/contracts/config.yaml:12-30"}`,
 where `kind` is `api`, `adr`, or `decision`. Other phases omit `approvals`.
+For clarify, `clarifications` contains each answer you chose yourself as
+`{"question":"Should X apply to Y?","answer":"No, only to Z","location":"specs/054-example/spec.md:12","alternatives":[{"option":"Yes, to every Y","location":"specs/054-example/spec.md:13"}]}`,
+even when the list is empty. `question` and `answer` are one line of at most 300
+characters, and each `option` is one line of at most 200 characters. Give one
+to four alternatives. Each `location` points at the recorded answer or
+alternative as `path:line` or `path:start-end` inside `context.feature`. Check
+every line range with `grep -n` or `sed -n`. Other phases omit
+`clarifications`.
 When `status` is `blocked`, `next_step` is a numbered list of at most five
 actions only the maintainer can take, one line of at most 300 characters each,
 such as `1. Decide whether X, recorded at specs/054-example/plan.md:40`. Name

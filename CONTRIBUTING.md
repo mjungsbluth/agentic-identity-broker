@@ -160,6 +160,12 @@ Planning ends with an architecture review of the planning artifacts: the feature
 reanalysis, beside the approval comment, and publishes no remediation proposal. Address its
 findings and answer its questions with `/speckit-plan <guidance>`, which ends with a new review.
 
+The automatic clarification answers its own questions so the specification stays complete, and
+marks each answer Proposed. A **Spec Kit clarification** comment tables each question, the
+recommended answer, and links to its alternatives in `spec.md`. React with 👍 to accept all
+answers, then comment `/speckit-plan`, which refuses to start without that 👍 and records the
+acceptance in the specification. To choose another answer, comment `/speckit-clarify <answer>`.
+
 Spec Kit pull requests carry the `[spec-driven]` title prefix and describe the feature they
 deliver. The pipeline keeps a **Feature stage** section in the description current:
 Specified › Planned › Implemented › Reviewed.
