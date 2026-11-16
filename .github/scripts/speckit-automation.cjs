@@ -35,7 +35,8 @@ const labels = {
 };
 const running = {
   clarify: "Clarifying the specification", plan: "Planning", implement: "Implementing",
-  review: "Reviewing the architecture", apply: "Applying the approved remediation",
+  review: "Reviewing the architecture", planreview: "Reviewing the plan's architecture",
+  apply: "Applying the approved remediation",
 };
 const reviewDimensions = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority",
   "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability", "behavioral-probe"];
@@ -534,7 +535,8 @@ async function route({ github, context }) {
   const entries = await reports(github, repo, number);
   const comment = command && !isReview ? payload.comment.id : 0;
   const routed = (action) => ({ action, issue, pr: number, comment, ...(isReview ? { review: payload.review.id } : {}) });
-  if (command?.phase === "architecture-review") return routed("review");
+  // Before implementation there is only the plan to review, so the review takes the planning focus.
+  if (command?.phase === "architecture-review") return routed(current(entries).implement ? "review" : "planreview");
   if (command?.phase === "clarify") {
     const pending = latest(entries, ["clarify"]);
     if (!isReview && pending?.result.status === "waiting") {
@@ -1225,7 +1227,7 @@ function featureStage(state, active) {
     ["Implemented", stages.implement ? outcome(stages.implement.result) : "○"],
     ["Reviewed", reviewIcon(state)],
   ];
-  const at = { clarify: 0, plan: 1, implement: 2, ...(stages.implement ? { review: 3, apply: 3 } : {}) }[active];
+  const at = { clarify: 0, plan: 1, planreview: 1, implement: 2, ...(stages.implement ? { review: 3, apply: 3 } : {}) }[active];
   if (at !== undefined) steps.forEach((step, index) => {
     if (index >= at) step[1] = index === at ? "⏳" : "○";
   });
@@ -1248,8 +1250,9 @@ function maintainerCommands() {
     "- `/speckit-plan <change>` revises the specification and design and replaces the approval comment.",
     "- `/speckit-clarify [focus]` revisits the specification. Once a plan exists, it also refreshes the plan " +
       "and the approval comment.",
-    "- `/architecture-review [focus]` reviews the current commit again. After implementation, tick the items to apply " +
-      "in its remediation proposal, then tick **Apply the selected items**.",
+    "- `/architecture-review [focus]` reviews the plan again before implementation, and the current commit after it. " +
+      "A review after implementation posts a remediation proposal: tick the items to apply, then tick " +
+      "**Apply the selected items**.",
     "- Submit a review whose summary starts with `/speckit-clarify` or `/speckit-plan` to apply its inline comments " +
       "in that phase.",
   ];
@@ -1296,7 +1299,7 @@ async function announce({ github, context, needs }) {
   const state = await pullRequestState(github, repo, number);
   if (state) await publishSection(github, repo, state.pr, featureStage(state, action));
   const approve = action === "implement" || state?.stages.implement ? "✅" : "○";
-  const active = action === "apply" ? "apply-review" : action === "review" ? undefined : action;
+  const active = action === "apply" ? "apply-review" : ["review", "planreview"].includes(action) ? undefined : action;
   const repair = Number(needs.route?.outputs?.validation);
   if (repair) {
     return publishStatus(github, repo, number,
@@ -1348,8 +1351,10 @@ async function report({ github, context, needs }) {
   const [last] = entries.filter((entry) => runOf(entry.result) === run).sort((a, b) => b.comment.id - a.comment.id);
   const jobs = Object.entries(needs).filter(([name]) => pipeline.includes(name))
     .sort(([a], [b]) => pipeline.indexOf(a) - pipeline.indexOf(b));
-  const error = jobs.find(([, job]) => job.result === "failure" && job.outputs?.error);
-  const failed = jobs.find(([, job]) => job.result === "failure");
+  // A failed plan review leaves the plan itself intact, so it is reported under the next step instead.
+  const stopping = jobs.filter(([name]) => name !== "planreview");
+  const error = stopping.find(([, job]) => job.result === "failure" && job.outputs?.error);
+  const failed = stopping.find(([, job]) => job.result === "failure");
   const stages = state?.stages || {};
   const tip = stages[phases.filter((phase) => stages[phase]).at(-1)];
   // A failed job without its own result must not be explained by a blocker from an earlier run.

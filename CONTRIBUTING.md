@@ -159,6 +159,8 @@ Planning ends with an architecture review of the planning artifacts: the feature
 `plan.md`, `tasks.md`, design documents, and ADR or API contract drafts. It runs after the
 reanalysis, beside the approval comment, and publishes no remediation proposal. Address its
 findings and answer its questions with `/speckit-plan <guidance>`, which ends with a new review.
+Before implementation, `/architecture-review [focus]` runs this plan review again. A failed plan
+review does not block sign-off; the status comment notes it under the next step.
 
 The automatic clarification answers its own questions so the specification stays complete, and
 marks each answer Proposed. A **Spec Kit clarification** comment tables each question, the
@@ -186,6 +188,10 @@ there. Issue, comment, label, schedule, and workflow-run events run workflows fr
 so a fork that iterates on them can make a separate branch its default and keep `main` an unchanged
 mirror of upstream. A `/speckit-` command in a pull request review is the exception: it runs the
 workflow file from the pull request's merge ref.
+
+Each agent run stops at the AI credit budget that the Actions variable `GH_AW_DEFAULT_MAX_AI_CREDITS`
+sets, 1000 when it is unset. A plan review or an implementation can exceed that, so a fork sets
+the variable as well.
 
 ### Backend
 

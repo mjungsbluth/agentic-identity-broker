@@ -476,9 +476,12 @@ jobs:
             }
 
   # A finished plan gets the architectural review before sign-off; its findings return through /speckit-plan.
+  # Before implementation, a maintainer's /architecture-review runs this plan review again.
   planreview:
     needs: [route, specify, reanalyze, verify]
-    if: always() && needs.reanalyze.result == 'success' && needs.verify.result == 'success'
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'planreview' || (needs.reanalyze.result == 'success' && needs.verify.result == 'success'))
     permissions:
       actions: read
       checks: read
@@ -488,6 +491,7 @@ jobs:
     uses: ./.github/workflows/architecture-review.lock.yml
     with:
       pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.action == 'planreview' && needs.route.outputs.comment || '0') }}
       focus: >-
         Planning has ended and this pull request holds no implementation yet. Review the planning artifacts as the
         design the implementation must follow: the Spec Kit feature directory (spec.md, plan.md, tasks.md, research.md,

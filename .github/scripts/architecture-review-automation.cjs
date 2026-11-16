@@ -100,13 +100,16 @@ async function prepare({ github, context, inputs }) {
     pr: pr.number, head: pr.head.sha, branch: pr.head.ref, base: pr.base.ref, base_sha: pr.base.sha,
     feature: feature(pr, repo), focus: "",
   };
-  if (Number(inputs.comment)) {
-    data.command = await maintainerCommand(github, repo, Number(inputs.comment), pr.number);
-    data.focus = data.command.argument;
-  } else if (inputs.focus) {
-    // A caller's focus is trusted workflow input, such as the Spec Kit pipeline's re-review after remediation.
+  if (inputs.focus) {
+    // A caller's focus is trusted workflow input, such as the Spec Kit pipeline's plan review or re-review.
     if (typeof inputs.focus !== "string" || inputs.focus.length > maxFocus) throw new Error("Invalid review focus");
     data.focus = inputs.focus.trim();
+  }
+  if (Number(inputs.comment)) {
+    data.command = await maintainerCommand(github, repo, Number(inputs.comment), pr.number);
+    const argument = data.command.argument;
+    data.focus = data.focus && argument ? `${data.focus}\n\nThe maintainer's focus for this run: ${argument}` :
+      data.focus || argument;
   }
   const files = await github.paginate(github.rest.pulls.listFiles, { ...repo, pull_number: pr.number, per_page: 100 });
   const changed = files.map((file) => ({
