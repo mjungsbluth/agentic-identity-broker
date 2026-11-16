@@ -119,6 +119,7 @@ function fixture(eventName, payload, options = {}) {
   const deleted = [];
   const minimized = [];
   const dispatched = [];
+  const updated = [];
   const sources = { ...files, ...options.extra };
   const hooks = [];
   const github = {
@@ -163,6 +164,10 @@ function fixture(eventName, payload, options = {}) {
         list: async () => ({ data: options.existing || [] }),
         getReview: async ({ review_id }) => ({ data: options.reviews.find((entry) => entry.id === review_id) }),
         listReviewComments: async () => ({ data: options.reviewComments || [] }),
+        update: async (args) => {
+          updated.push(args);
+          return { data: { ...pr, body: args.body } };
+        },
       },
       issues: {
         listComments: async () => ({ data: options.comments || [] }),
@@ -206,7 +211,7 @@ function fixture(eventName, payload, options = {}) {
     paginate: async (method, args) => (await method(args)).data,
   };
   return {
-    github, calls, contentReads, created, deleted, minimized, dispatched, hooks,
+    github, calls, contentReads, created, deleted, minimized, dispatched, hooks, updated,
     context: { repo, eventName, payload, actor: "maintainer", runId: 100 },
   };
 }
@@ -1741,6 +1746,85 @@ test("remediation waits for a completed code phase; earlier reviews publish no p
   assert.ok(body.includes("Its findings are remediated after `/speckit-implement`, when the review runs again."));
   assert.ok(!body.includes("remediation proposal"));
   assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
+});
+
+test("planning ends with an architecture review of the plan that /speckit-plan addresses", async () => {
+  const comments = [
+    posted(result("clarify"), 10), posted(result("reanalyze", { approvals: [] }), 18),
+    approvalComment({ reanalysis: 18, items: 0 }, { id: 19 }),
+    architectureReview([item("F1"), item("F2", { bucket: "question", question: "Which store owns it?" })], { id: 22 }),
+  ];
+  const needs = (planreview, proposals) => ({
+    route: { result: "success", outputs: { action: "plan", pr: "42" } },
+    reanalyze: { result: "success", outputs: {} }, approvals: { result: "success", outputs: {} },
+    planreview, ...(proposals ? { proposals } : {}),
+  });
+  const f = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
+  await report({ ...f, needs: needs({ result: "success", outputs: { comment_id: "22" } },
+    { result: "success", outputs: { comment_id: "", recommendation: "DISCUSS", questions: "1", remediable: "false" } }) });
+  const { body } = f.created[0];
+  assert.ok(body.startsWith("## Spec Kit · ✅ Ready to implement\n"));
+  assert.ok(body.includes("› **Approve ✅** › Implement ○ › Review ○ › Fix ○"));
+  assert.ok(body.includes(`Architecture review of the plan: **DISCUSS**. [Read the review](${link(22)}).`));
+  assert.ok(body.includes("Address its findings with `/speckit-plan <guidance>` before you approve; planning then ends with a new review."));
+  assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
+  assert.ok(!body.includes("remediated after `/speckit-implement`"));
+
+  const approved = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
+  await report({ ...approved, needs: needs({ result: "success", outputs: { comment_id: "22" } },
+    { result: "success", outputs: { comment_id: "", recommendation: "APPROVE", questions: "0", remediable: "false" } }) });
+  assert.ok(approved.created[0].body.includes(
+    `Architecture review of the plan: **APPROVE**. [Read the review](${link(22)}).\n\nNothing is left to remediate.`));
+
+  const crashed = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
+  await report({ ...crashed, needs: needs({ result: "failure", outputs: {} }) });
+  assert.ok(crashed.created[0].body.startsWith("## Spec Kit · ⛔ `planreview` failed\n"));
+  assert.ok(crashed.created[0].body.includes("### Next step\n\nThe architecture review step failed before publishing."));
+});
+
+test("the PR description shows the feature stage, and every run keeps it current", async () => {
+  const description = "Agents learn that an approval expires before it does.\n\n" +
+    "Related issue: https://github.com/example/broker/issues/7\n<!-- speckit-issue: 7 -->";
+  const section = (line) => `<!-- speckit-stage -->\n## Feature stage\n\n${line}\n<!-- /speckit-stage -->`;
+  const run = async (comments, action, { body = description, start = false, permission } = {}) => {
+    const f = fixture("issue_comment", commandEvent(command(`/speckit-${action}`)), { comments, pr: { body }, permission });
+    await (start ? announce : report)({ ...f, needs: { route: { result: "success", outputs: { action, pr: "42" } } } });
+    return f;
+  };
+  const clarified = [posted(result("clarify"), 10)];
+  const reanalyzed = [...clarified, posted(result("reanalyze", { approvals: [] }), 18)];
+  const reviewed = [...reanalyzed, posted(result("implement"), 21), architectureReview([], { id: 22, recommendation: "APPROVE" })];
+
+  const specified = await run(clarified, "clarify");
+  assert.equal(specified.updated.length, 1);
+  assert.equal(specified.updated[0].pull_number, 42);
+  assert.equal(specified.updated[0].body, "Agents learn that an approval expires before it does.\n\n" +
+    `${section("**Specified ✅** › Planned ○ › Implemented ○ › Reviewed ○")}\n\n` +
+    "Related issue: https://github.com/example/broker/issues/7\n<!-- speckit-issue: 7 -->");
+
+  const planning = await run(clarified, "plan", { body: specified.updated[0].body, start: true });
+  assert.equal(planning.updated[0].body,
+    specified.updated[0].body.replace("**Specified ✅** › Planned ○", "Specified ✅ › **Planned ⏳**"));
+
+  const planned = await run(reanalyzed, "plan", { body: planning.updated[0].body });
+  assert.ok(planned.updated[0].body.includes(section("Specified ✅ › **Planned ✅** › Implemented ○ › Reviewed ○")));
+  assert.equal(planned.updated[0].body.split("<!-- speckit-stage -->").length, 2);
+
+  const finding = { severity: "HIGH", summary: "Gap", location: "spec.md:1", recommendation: "Close it" };
+  const flagged = await run([...clarified, posted(result("reanalyze", { findings: [finding], approvals: [] }), 18)], "plan");
+  assert.ok(flagged.updated[0].body.includes("Specified ✅ › **Planned ⚠️** › Implemented ○ › Reviewed ○"));
+
+  const done = await run(reviewed, "implement", { body: planned.updated[0].body });
+  assert.ok(done.updated[0].body.includes("Specified ✅ › Planned ✅ › Implemented ✅ › **Reviewed ✅**"));
+  assert.equal((await run(reviewed, "implement", { body: done.updated[0].body })).updated.length, 0);
+
+  const replanning = await run(reviewed, "plan", { body: done.updated[0].body, start: true });
+  assert.ok(replanning.updated[0].body.includes("Specified ✅ › **Planned ⏳** › Implemented ○ › Reviewed ○"));
+
+  const bare = await run(clarified, "clarify", { body: "<!-- speckit-issue: 7 -->" });
+  assert.equal(bare.updated[0].body,
+    `<!-- speckit-issue: 7 -->\n\n${section("**Specified ✅** › Planned ○ › Implemented ○ › Reviewed ○")}\n`);
+  assert.equal((await run(clarified, "clarify", { permission: "read" })).updated.length, 0);
 });
 
 const head = "a".repeat(40);

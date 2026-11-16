@@ -21,8 +21,11 @@ const statusMarker = "<!-- speckit-status -->";
 const commitNotice = /^Commit pushed: \[`([0-9a-f]{7,40})`\]\((https:\/\/github\.com\/\S+?\/commit\/[0-9a-f]{40})\)/;
 const blocking = ["CRITICAL", "HIGH"];
 const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "analyze", "remediate", "reanalyze",
-  "implement", "verify", "approvals", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals", "tests"];
-const reviewJobs = ["review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
+  "implement", "verify", "approvals", "planreview", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals",
+  "tests"];
+const reviewJobs = ["planreview", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
+const stageMarkers = ["<!-- speckit-stage -->", "<!-- /speckit-stage -->"];
+const planning = ["plan", "tasks", "analyze", "remediate", "reanalyze"];
 const labels = {
   clarify: "Clarify", plan: "Plan", tasks: "Tasks", analyze: "Analyze", remediate: "Remediate",
   reanalyze: "Reanalyze", implement: "Implement", "remediate-review": "Fix", "apply-review": "Apply",
@@ -1021,19 +1024,26 @@ function agentComments(comments, repo, run) {
 }
 
 // The architecture review and its remediation run in the same pipeline; their comments are the workers' own.
+// Planning ends with its own review, whose findings change the plan rather than the code.
 function reviewLines(needs, repo, number) {
-  const final = ["rereview", "review"].map((name) => needs[name]).find((job) => job && job.result !== "skipped");
+  const [name, final] = ["rereview", "review", "planreview"].map((job) => [job, needs[job]])
+    .find(([, job]) => job && job.result !== "skipped") || [];
   if (!final) return [];
+  const subject = name === "planreview" ? "Architecture review of the plan" : "Architecture review";
   const url = (id) => `https://github.com/${repo.owner}/${repo.repo}/pull/${number}#issuecomment-${id}`;
   const id = Number(final.outputs?.comment_id);
   if (final.result !== "success" || !id) {
-    return ["", "Architecture review did not complete. Comment `/architecture-review` to run it again."];
+    return ["", `${subject} did not complete. Comment \`/architecture-review\` to run it again.`];
   }
   const proposals = needs.proposals?.result === "success" ? needs.proposals.outputs || {} : {};
   const recommendation = Object.hasOwn(reviewRecommendations, proposals.recommendation) ? proposals.recommendation : null;
-  const lines = ["", `Architecture review${recommendation ? `: **${recommendation}**` : ""}. [Read the review](${url(id)}).`];
+  const lines = ["", `${subject}${recommendation ? `: **${recommendation}**` : ""}. [Read the review](${url(id)}).`];
   const proposal = Number(proposals.comment_id);
-  if (proposals.remediable === "false") {
+  if (name === "planreview") {
+    if (recommendation !== "APPROVE") {
+      lines.push("", "Address its findings with `/speckit-plan <guidance>` before you approve; planning then ends with a new review.");
+    }
+  } else if (proposals.remediable === "false") {
     lines.push("", "Its findings are remediated after `/speckit-implement`, when the review runs again.");
   } else if (proposal) {
     lines.push("", `Decide the remaining items in the [remediation proposal](${url(proposal)}): tick each item to apply, ` +
@@ -1101,9 +1111,47 @@ async function publishStatus(github, repo, number, title, sections) {
 }
 
 // The latest review of the current commit gives the Review step its icon; an older review no longer counts.
+// Before implementation the current commit holds only the plan, so its review is not the Review step.
 function reviewIcon(state) {
-  const entry = state && latestReview(state.comments, state.pr.head.sha);
+  const entry = state?.stages.implement && latestReview(state.comments, state.pr.head.sha);
   return entry ? reviewRecommendations[entry.review.recommendation] : "○";
+}
+
+// The PR description tells a reader where the feature stands; a running phase marks its stage and resets later ones.
+function featureStage(state, active) {
+  const { stages } = state;
+  const blocked = (names) => names.some((phase) => stages[phase]?.result.status === "blocked");
+  const steps = [
+    ["Specified", stages.clarify ? outcome(stages.clarify.result) : "⏳"],
+    ["Planned", stages.reanalyze ? outcome(stages.reanalyze.result) : blocked(planning) ? "⛔" : "○"],
+    ["Implemented", stages.implement ? outcome(stages.implement.result) : "○"],
+    ["Reviewed", reviewIcon(state)],
+  ];
+  const at = { clarify: 0, plan: 1, implement: 2, ...(stages.implement ? { review: 3, apply: 3 } : {}) }[active];
+  if (at !== undefined) steps.forEach((step, index) => {
+    if (index >= at) step[1] = index === at ? "⏳" : "○";
+  });
+  const focus = at ?? steps.findLastIndex(([, icon]) => icon !== "○");
+  return steps.map(([name, icon], index) => (index === focus ? `**${name} ${icon}**` : `${name} ${icon}`)).join(" › ");
+}
+
+// Only this section of the description is the pipeline's; the agent-written summary and links stay as they are.
+async function publishStage(github, repo, pr, line) {
+  const [open, close] = stageMarkers;
+  const section = [open, "## Feature stage", "", line, close].join("\n");
+  const body = pr.body || "";
+  const start = body.indexOf(open);
+  const end = start >= 0 ? body.indexOf(close, start) : -1;
+  let next;
+  if (end >= 0) {
+    next = body.slice(0, start) + section + body.slice(end + close.length);
+  } else {
+    const lines = body.split("\n");
+    const links = lines.findIndex((entry) => entry.startsWith("Related issue: "));
+    next = links >= 0 ? [...lines.slice(0, links), section, "", ...lines.slice(links)].join("\n") :
+      body.trim() ? `${body.trimEnd()}\n\n${section}\n` : `${section}\n`;
+  }
+  if (next !== body) await github.rest.pulls.update({ ...repo, pull_number: pr.number, body: next });
 }
 
 // The status comment replaces itself on every run, so the PR always ends with one summary of the phase and the next step.
@@ -1115,6 +1163,7 @@ async function announce({ github, context, needs }) {
   const action = created ? "clarify" : needs.route?.outputs?.action;
   if (!running[action] || !number || !await authorized(github, context, needs.route)) return null;
   const state = await pullRequestState(github, repo, number);
+  if (state) await publishStage(github, repo, state.pr, featureStage(state, action));
   const approve = action === "implement" || state?.stages.implement ? "✅" : "○";
   const active = action === "apply" ? "apply-review" : action === "review" ? undefined : action;
   const repair = Number(needs.route?.outputs?.validation);
@@ -1243,6 +1292,7 @@ async function report({ github, context, needs }) {
     earlierRuns(entries, repo, run),
     [`[Workflow run](${runURL(repo, run)})`],
   ]);
+  if (state) await publishStage(github, repo, state.pr, featureStage(state));
   // The status comment now summarizes this run, so its agent comments are folded but stay readable and parseable.
   const unfolded = [];
   for (const entry of agentComments(state?.comments || [], repo, run)) {

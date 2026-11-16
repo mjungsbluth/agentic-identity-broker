@@ -62,7 +62,7 @@ safe-outputs:
     # Reading branch protection needs Administration, which the App does not hold; Spec Kit branches are unprotected.
     check-branch-protection: false
     target: ${{ inputs.pr }}
-    required-title-prefix: "[Spec Kit] "
+    required-title-prefix: "[spec-driven] "
     base-branch: ${{ github.event.repository.default_branch }}
     allowed-files:
       - "internal/**"

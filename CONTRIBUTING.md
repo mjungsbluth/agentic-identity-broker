@@ -155,6 +155,15 @@ On a Spec Kit draft PR, `/architecture-review` and the automatic review after
 The status comment links the latest review and proposal and names the next step. A new
 review replaces the proposal, so items left unticked stay open until the next review.
 
+Planning ends with an architecture review of the planning artifacts: the feature's `spec.md`,
+`plan.md`, `tasks.md`, design documents, and ADR or API contract drafts. It runs after the
+reanalysis, beside the approval comment, and publishes no remediation proposal. Address its
+findings and answer its questions with `/speckit-plan <guidance>`, which ends with a new review.
+
+Spec Kit pull requests carry the `[spec-driven]` title prefix and describe the feature they
+deliver. The pipeline keeps a **Feature stage** section in the description current:
+Specified › Planned › Implemented › Reviewed.
+
 The agentic workflows (Spec Kit, architecture review, conflict resolution, Repo Assist, Repo Ask, and the
 grumpy reviewer) open their pull requests, push, comment, review, and react as the Agentic Workflows App, never as `github-actions[bot]` or a personal token. They need the App
 described under [Opt-in conflict resolution](#opt-in-conflict-resolution) with Actions read/write
