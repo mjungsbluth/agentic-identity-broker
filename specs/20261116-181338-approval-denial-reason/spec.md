@@ -19,6 +19,12 @@
 > - Only the denying user can set it, at the moment of denial; it cannot be changed afterwards.
 > - The reason must not be logged or exported as telemetry, because users may type personal data into it.
 
+## Clarifications
+
+### Session 2026-11-16
+
+- Q: Should a permanent-denial reason also accompany later tool invocations blocked by that denial? → A: **Proposed — original approval only**, including authorized repeat reads or deliveries of that same decision. Later blocked invocations receive no user-authored reason. Rationale: the explanation belongs to the reviewed request, and limiting its reuse avoids repeatedly exposing potentially personal text or presenting request-specific guidance as advice for another call. Main alternative: share the reason on every later matching blocked invocation for the same principal-agent pair, providing more context but broadening disclosure. **Approval item D-001 (Decision)**: planning MUST register this delivery-scope choice in `plan.md` under `## Approval Items`; it is not approved by this clarification. FR-010, Scenario 3.7, Journey 3, SR-003, and SC-007 reflect the proposed choice.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Explain a denial to the requesting agent (Priority: P1)
@@ -65,6 +71,7 @@ As a user, I need my explanation to stay attached to the decision I made, inacce
 4. **Given** a reason-bearing denial submitted successfully, **When** the owner reopens its decision or the authorized requesting agent receives that decision again during its existing availability period, **Then** they receive the same reason and denied status together, including after a broker restart when using durable storage.
 5. **Given** successful and rejected denial journeys containing a distinctive synthetic reason, **When** logs and exported telemetry from the browser, broker, and participating gateway are inspected, **Then** no reason text appears in any log, trace, metric, event, or error detail exported as telemetry; the decision remains auditable using non-content metadata.
 6. **Given** a pending approval, **When** its owner denies with literal markup-like text such as `<b>Use staging</b>`, **Then** the authorized outcome retains that text as data, and any user-facing display renders it literally rather than interpreting it as markup or executable content.
+7. **Given** a permanent denial with a reason for Alice and Release Assistant, **When** that agent makes a later call to the same tool with the same or different arguments, **Then** the permanent denial still blocks the tool under existing matching rules, but the later invocation receives no user-authored reason; authorized rereads or deliveries of the original approval's decision still return its original reason during its existing availability period.
 
 Each numbered acceptance scenario is a separate acceptance-test target under Constitution Principle XIII. Concrete journeys below provide shared examples, not replacement tests. User Story 1, Scenario 2 includes both existing browser entry points; its browser coverage must exercise both.
 
@@ -75,7 +82,7 @@ Each numbered acceptance scenario is a separate acceptance-test target under Con
 - A failed submission leaves the approval pending. The user can correct validation errors without retyping the reason; cancelling discards the unsubmitted reason and never sends it as a decision.
 - An expired approval, another tab's completed decision, or competing approve/deny requests must not produce a reason detached from its winning decision.
 - Existing denied records that predate the feature have no reason. Their status and authorization effect do not change.
-- Temporary and permanent denial choices retain their existing authorization scope. Whether a permanent denial's reason accompanies later blocked invocations is the open product question in FR-010.
+- Temporary and permanent denial choices retain their existing authorization scope. Under the proposed FR-010 scope, a permanent denial's reason accompanies only the original approval's decision, not later blocked invocations, even if they repeat the original tool arguments.
 - Browser refresh after a successful denial shows the recorded decision, not an editable reason form. A network retry cannot replace the original reason.
 - A denial caused by policy, expiry, revocation, or infrastructure failure must not invent a user-authored reason or reuse another approval's reason.
 
@@ -210,7 +217,7 @@ Content-Type: application/json
 
 **Observable result**: Denial without a reason still works for browsers and existing clients; approval has no new step or input.
 
-### Journey 3 — Alice's explanation cannot be forged, overwritten, or leaked (User Story 3, Scenarios 1–5)
+### Journey 3 — Alice's explanation cannot be forged, overwritten, or leaked (User Story 3, Scenarios 1–5 and 7)
 
 **Step 1 — 10:04:00: Bob attempts to deny Alice's pending approval D with `Ship it anyway`.** The operation is rejected using existing ownership rules. D remains pending with no reason, and Bob cannot retrieve Alice's decision details. Unauthenticated callers and agents likewise cannot author a denial reason.
 
@@ -222,7 +229,9 @@ Content-Type: application/json
 
 **Step 5 — boundary variants**: A denial attempted after `10:10:00Z` on an undecided request records no reason. A denial attempted on approved C cannot change C or attach text. Competing approve and deny submissions on a fresh pending request produce one final decision, with a reason only if the reason-bearing denial wins.
 
-**Observable result**: Only the authenticated deciding owner authors a reason, only at the successful pending-to-denied transition. Captured logs and telemetry across successful, rejected, and repeated operations contain neither example reason.
+**Step 6 — permanent-denial variant**: Repeat Steps 1–4 with a separate pending approval E (`990e8400-e29b-41d4-a716-446655440024`) and Alice choosing **Deny permanently** at Step 2. At `10:06:00Z`, Release Assistant makes a later `deploy_release` call for Alice, first with the original production arguments and then with `{"project":"staging","version":"v2.3.0"}`. Both invocations remain blocked by the existing tool-wide permanent denial. Neither response contains `Wait for the release window.` or another user-authored reason. These are new invocations, not rereads of E's decision. At `10:07:00Z`, an authorized reread of E still returns its denied status and `Wait for the release window.` together. No new retention period or authorization effect is introduced.
+
+**Observable result**: Only the authenticated deciding owner authors a reason, only at the successful pending-to-denied transition. Captured logs and telemetry across successful, rejected, and repeated operations contain neither example reason. The reason remains available with its original decision, without being reused on later permanently blocked calls.
 
 ## Requirements *(mandatory)*
 
@@ -237,7 +246,7 @@ Content-Type: application/json
 - **FR-007**: The requesting agent MUST receive the reason together with the corresponding denied outcome through the supported tool-approval delivery flow. Implementing only browser confirmation, persistence, or internal gateway synchronization does not satisfy delivery. No new polling duty is imposed on the human user.
 - **FR-008**: Authorized repeat reads or deliveries of the same decision MUST preserve its reason throughout that decision's existing availability period; durable storage MUST preserve it across broker restarts. The feature MUST NOT independently extend approval retention.
 - **FR-009**: Approval collection, approval persistence scopes, tool matching, expiry, revocation, and denial enforcement MUST retain their existing authorization meaning. Approving MUST take no reason and MUST NOT record or propagate a denial reason. Reason-free requests and historical records MUST remain supported.
-- **FR-010**: Permanent-denial explanations require a scope decision: [NEEDS CLARIFICATION: Should a reason recorded for a permanent denial be returned only for the original approval request, or also on later tool invocations blocked by that permanent denial?] Until resolved, no broader reuse of the text is authorized.
+- **FR-010**: **Proposed (approval item D-001)**: A permanent-denial reason MUST accompany only the original approval's denied outcome, including authorized repeat reads or deliveries of that same decision. A later invocation blocked by that permanent denial MUST NOT receive its reason, even for the same principal-agent pair, tool, and arguments. Permanent-denial matching and enforcement remain unchanged; absence of a reason on later blocked calls MUST NOT permit execution or bypass the block.
 - **FR-011**: Users MUST be able to cancel before committing a denial without changing the approval or saving the unsubmitted reason. Validation failures MUST allow correction and resubmission while the approval remains eligible.
 - **FR-012**: The denying user MUST be able to see the recorded reason read-only when revisiting an available decision. Missing reasons MUST not produce a misleading empty explanation. No edit control is provided.
 
@@ -292,7 +301,7 @@ sequenceDiagram
 
 - **SR-001**: Submitted reason text MUST NOT enter logs or exported telemetry anywhere in the affected browser, broker, or gateway flow, including request/response capture, errors, traces, span events, metric values or labels, and audit content. Hashing, encoding, or truncating the text is not a permitted substitute.
 - **SR-002**: Security decisions MUST remain auditable using permitted non-content metadata under the existing logging and OpenTelemetry standards. Ownership and eligibility failures MUST fail closed without echoing the submitted reason.
-- **SR-003**: Existing authenticated browser-owner and trusted-gateway boundaries MUST be preserved. Reason delivery MUST be scoped to the corresponding user-agent decision, with no exposure to unrelated users or agents. Existing authorized gateway synchronization remains a trusted control-plane boundary, not a public agent read interface.
+- **SR-003**: Existing authenticated browser-owner and trusted-gateway boundaries MUST be preserved. Reason delivery MUST be scoped to the corresponding user-agent decision, with no exposure to unrelated users or agents or reuse for later invocations under proposed FR-010. Existing authorized gateway synchronization remains a trusted control-plane boundary, not a public agent read interface.
 - **SR-004**: Reasons MUST be treated as untrusted text on input, display, and delivery; no HTML/Markdown execution or authorization/policy interpretation. A user's explanation does not authorize an alternative tool call.
 
 ### Frontend/Design System Requirements
@@ -318,12 +327,13 @@ sequenceDiagram
 - **SC-004**: All unauthorized, expired, repeated, and competing-decision acceptance journeys preserve one valid final decision and its associated reason; zero post-decision reason changes succeed.
 - **SC-005**: Zero occurrences of submitted reason content appear in captured operational logs or exported telemetry across successful, failed, and repeated denial journeys in the affected components.
 - **SC-006**: All authorized reread and durable-restart acceptance journeys return the original decision and reason together during the decision's availability period.
+- **SC-007**: In all later-invocation permanent-denial acceptance journeys, zero tool calls execute and zero user-authored reasons are returned for those later invocations; authorized rereads of the original decision retain its reason.
 
 ## Assumptions
 
 - A fixed 500-Unicode-code-point limit is a proposed product default for “short”; it is not a new operator configuration option. Empty/whitespace-only input means absence; other text is preserved rather than silently trimmed.
 - Existing authentication, approval ownership, denial scopes, expiry, and retention continue to govern. This feature adds explanation, not a comment history, post-decision editing, new notification channel, or approval-policy language.
 - The supported agent delivery journey includes the broker and any participating gateway required for the requesting agent to receive its denied outcome. Contract design must account for temporary denial as well as permanent denial; the current cache's permanent-denial behavior is not a reason to omit temporary-denial delivery.
-- A permanent-denial reason's reuse for later calls remains unresolved in FR-010 because that choice changes both user expectations and the exposure of potentially personal text.
+- Under proposed FR-010, a permanent-denial reason is specific to its original approval and is not reused for later blocked calls. This exposure-scope choice requires maintainer sign-off as D-001; it does not change permanent-denial authorization scope.
 - The reason is retained with the existing approval, not on a new independent retention schedule. No new promise of end-to-end encryption, administrative access, analytics, or content search is introduced.
 - Reduced agent retries are the motivation, not a guaranteed agent behavior or a new metric that collects reason content. Delivery correctness can be verified without requiring any particular model response.
