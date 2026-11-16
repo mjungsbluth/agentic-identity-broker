@@ -248,7 +248,8 @@ test("prepare writes the compact context and PR details with changed files and A
   assert.equal(root.length > 0, true);
   assert.deepEqual(data, {
     run: "100/2", repository: "example/broker", pr: 42, head, branch: "feature/approvals", base: "main", base_sha: base,
-    feature: "specs/054-approvals", focus: "sessions", command: { id: 20, author: "maintainer", argument: "sessions" },
+    feature: "specs/054-approvals", focus: "sessions", dimensions,
+    command: { id: 20, author: "maintainer", argument: "sessions" },
   });
   assert.deepEqual(written["context.json"], data);
   const details = written["pr-details.json"];
@@ -310,6 +311,37 @@ test("prepare fails closed for non-maintainers, ineligible PRs, and forged comma
   const data = await prepare({ ...f, inputs: { pr: "42", comment: "0" } });
   assert.equal(data.command, undefined);
   assert.equal(data.focus, "");
+});
+
+test("a calling workflow may limit the review to some dimensions", async (t) => {
+  t.mock.method(fs, "mkdirSync", () => undefined);
+  t.mock.method(fs, "writeFileSync", () => undefined);
+  const f = fixture("issue_comment", {});
+  const scoped = (value) => prepare({ ...f, inputs: { pr: "42", dimensions: value } });
+  assert.deepEqual((await scoped("coupling-cohesion, ubiquitous-language\nadr-compliance")).dimensions,
+    ["ubiquitous-language", "adr-compliance", "coupling-cohesion"]);
+  assert.deepEqual((await scoped("")).dimensions, dimensions);
+  assert.deepEqual((await prepare({ ...f, inputs: { pr: "42" } })).dimensions, dimensions);
+  for (const value of ["telemetry", "adr-compliance adr-compliance", ",", 42]) {
+    await assert.rejects(scoped(value), /Invalid review dimensions/);
+  }
+});
+
+test("a scoped review covers only its dimensions and reports the others as skipped", () => {
+  const scope = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority", "coupling-cohesion"];
+  const scoped = { ...context, dimensions: scope };
+  const statuses = Object.fromEntries(dimensions.map((name) => [name, scope.includes(name) ? "assessed" : "skipped"]));
+  const body = `${draft().body.split("\n### OTel Parity")[0]}\n### Recommendation\n**DISCUSS** — one overlap.\n`;
+  assert.deepEqual(validateResult(draft({ dimensions: statuses, body }), scoped).failed, []);
+  assert.equal(validateResult(draft({
+    findings: [], recommendation: "APPROVE", dimensions: statuses, body: body.replace("**DISCUSS**", "**APPROVE**"),
+  }), scoped).recommendation, "APPROVE");
+  const reject = (overrides, pattern) => assert.throws(() => validateResult(draft({ dimensions: statuses, body, ...overrides }), scoped), pattern);
+  reject({ dimensions: { ...statuses, "adr-compliance": "skipped" } }, /Every analysis dimension/);
+  reject({ dimensions: { ...statuses, "otel-parity": "assessed" } }, /Every analysis dimension/);
+  reject({ findings: [finding({ dimension: "otel-parity" })] }, /F1 names a dimension outside this review/);
+  reject({ body: body.replace("\n### Concept Map", "\n### Concepts") }, /missing the "### Concept Map"/);
+  assert.throws(() => validateResult(draft({ dimensions: statuses, body }), context), /Every analysis dimension/);
 });
 
 test("results need every dimension, consistent severities, remediation buckets, and head-pinned links", () => {

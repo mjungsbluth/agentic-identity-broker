@@ -156,7 +156,10 @@ The status comment links the latest review and proposal and names the next step.
 review replaces the proposal, so items left unticked stay open until the next review.
 
 Planning ends with an architecture review of the planning artifacts: the feature's `spec.md`,
-`plan.md`, `tasks.md`, design documents, and ADR or API contract drafts. It runs after the
+`plan.md`, `tasks.md`, design documents, and ADR or API contract drafts. It covers five of the
+nine dimensions: ubiquitous language, hexagonal compliance, ADR compliance, data authority, and
+coupling and cohesion. OTel parity, E2E test quality, maintainability, and the behavioral probe
+judge an implementation and wait for the review after `/speckit-implement`. It runs after the
 reanalysis, beside the approval comment, and publishes no remediation proposal. Address its
 findings and answer its questions with `/speckit-plan <guidance>`, which ends with a new review.
 Before implementation, `/architecture-review [focus]` runs this plan review again. A failed plan

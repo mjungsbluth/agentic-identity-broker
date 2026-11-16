@@ -8,9 +8,13 @@ const marker = "## Architecture review result";
 const statusMarker = "<!-- architecture-review-status -->";
 const severities = ["RED", "YELLOW", "GREEN"];
 const recommendations = ["APPROVE", "DISCUSS", "REQUEST CHANGES"];
-const sections = ["### Executive Summary", "### Top Findings", "### Concept Map", "### Hexagonal Compliance",
-  "### Pattern Consistency", "### Coupling & Cohesion", "### OTel Parity", "### E2E Test Assessment",
-  "### Maintainability Forecast", "### Behavioral Probe", "### Recommendation"];
+// Each dimension's required section of the review body; data authority's section is optional.
+const dimensionSections = {
+  "ubiquitous-language": "### Concept Map", "hexagonal-compliance": "### Hexagonal Compliance",
+  "adr-compliance": "### Pattern Consistency", "data-authority": null, "coupling-cohesion": "### Coupling & Cohesion",
+  "otel-parity": "### OTel Parity", "e2e-test-quality": "### E2E Test Assessment",
+  "maintainability": "### Maintainability Forecast", "behavioral-probe": "### Behavioral Probe",
+};
 const pipeline = ["route", "review", "verify"];
 const maxFindings = 7;
 const maxBody = 60000;
@@ -98,7 +102,7 @@ async function prepare({ github, context, inputs }) {
   const data = {
     run: `${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`, repository: `${repo.owner}/${repo.repo}`,
     pr: pr.number, head: pr.head.sha, branch: pr.head.ref, base: pr.base.ref, base_sha: pr.base.sha,
-    feature: feature(pr, repo), focus: "",
+    feature: feature(pr, repo), focus: "", dimensions: reviewScope(inputs.dimensions),
   };
   if (inputs.focus) {
     // A caller's focus is trusted workflow input, such as the Spec Kit pipeline's plan review or re-review.
@@ -133,6 +137,16 @@ async function prepare({ github, context, inputs }) {
   return data;
 }
 
+// A calling workflow may limit the review to some dimensions, such as the Spec Kit pipeline's plan review.
+function reviewScope(value) {
+  if (value === undefined || value === "") return reviewDimensions;
+  const names = typeof value === "string" ? value.split(/[\s,]+/).filter(Boolean) : [];
+  if (!names.length || new Set(names).size !== names.length || names.some((name) => !reviewDimensions.includes(name))) {
+    throw new Error(`Invalid review dimensions; choose from ${reviewDimensions.join(", ")}`);
+  }
+  return reviewDimensions.filter((name) => names.includes(name));
+}
+
 function validateResult(draft, context) {
   if (!recommendations.includes(draft.recommendation)) throw new Error("Invalid recommendation");
   if (typeof draft.summary !== "string" || !draft.summary.trim() || draft.summary.length > 200 ||
@@ -142,11 +156,12 @@ function validateResult(draft, context) {
   if (!Array.isArray(draft.findings) || draft.findings.length > maxFindings) {
     throw new Error(`Findings must list at most ${maxFindings} items`);
   }
+  const scope = context.dimensions || reviewDimensions;
   const status = draft.dimensions;
   if (!status || typeof status !== "object" || Array.isArray(status) ||
       Object.keys(status).length !== reviewDimensions.length ||
-      reviewDimensions.some((name) => !["assessed", "failed"].includes(status[name]))) {
-    throw new Error("Every analysis dimension must be reported as assessed or failed");
+      reviewDimensions.some((name) => !(scope.includes(name) ? ["assessed", "failed"] : ["skipped"]).includes(status[name]))) {
+    throw new Error("Every analysis dimension must be reported as assessed or failed, and one outside this review as skipped");
   }
   const failed = reviewDimensions.filter((name) => status[name] === "failed");
   const items = draft.findings.map((finding) => {
@@ -157,6 +172,8 @@ function validateResult(draft, context) {
   });
   const counts = Object.fromEntries(severities.map((severity) =>
     [severity, items.filter((item) => item.severity === severity).length]));
+  const outside = items.find((item) => reviewDimensions.includes(item.dimension) && !scope.includes(item.dimension));
+  if (outside) throw new Error(`Finding ${outside.id} names a dimension outside this review: ${outside.dimension}`);
   const state = validateReviewState({
     run: context.run, pr: context.pr, head: context.head, recommendation: draft.recommendation,
     summary: draft.summary.trim(), findings: counts, failed, items,
@@ -176,6 +193,8 @@ function validateResult(draft, context) {
   const body = draft.body;
   if (typeof body !== "string" || !body.startsWith(`${heading}\n`)) throw new Error("The review body must start with the review heading");
   if (body.length > maxBody) throw new Error(`The review body exceeds ${maxBody} characters`);
+  const sections = ["### Executive Summary", "### Top Findings",
+    ...scope.map((name) => dimensionSections[name]).filter(Boolean), "### Recommendation"];
   for (const section of sections) {
     if (!body.includes(`\n${section}`)) throw new Error(`The review body is missing the "${section}" section`);
   }

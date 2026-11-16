@@ -492,6 +492,8 @@ jobs:
     with:
       pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
       comment: ${{ fromJSON(needs.route.outputs.action == 'planreview' && needs.route.outputs.comment || '0') }}
+      # Before any code exists, the structural dimensions carry the review; the others judge an implementation.
+      dimensions: ubiquitous-language hexagonal-compliance adr-compliance data-authority coupling-cohesion
       focus: >-
         Planning has ended and this pull request holds no implementation yet. Review the planning artifacts as the
         design the implementation must follow: the Spec Kit feature directory (spec.md, plan.md, tasks.md, research.md,
