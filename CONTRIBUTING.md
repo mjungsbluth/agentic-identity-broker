@@ -167,8 +167,10 @@ answers, then comment `/speckit-plan`, which refuses to start without that 👍 
 acceptance in the specification. To choose another answer, comment `/speckit-clarify <answer>`.
 
 Spec Kit pull requests carry the `[spec-driven]` title prefix and describe the feature they
-deliver. The pipeline keeps a **Feature stage** section in the description current:
-Specified › Planned › Implemented › Reviewed.
+deliver. The pipeline rewrites its own block of the description on every run: a **Feature
+stage** line (Specified › Planned › Implemented › Reviewed) and the **Maintainer commands**
+of the current pipeline. It also removes the command list that older pull requests carry
+from the specify agent.
 
 The agentic workflows (Spec Kit, architecture review, conflict resolution, Repo Assist, Repo Ask, and the
 grumpy reviewer) open their pull requests, push, comment, review, and react as the Agentic Workflows App, never as `github-actions[bot]` or a personal token. They need the App

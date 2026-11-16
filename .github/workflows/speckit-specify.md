@@ -84,8 +84,9 @@ the feature lets its users do once it ships, who benefits, and its scope. Write
 it as the target of this PR. Do not call the PR a specification, a spec-only
 change, or a first step, and do not summarize the automation.
 
-Do not add a stage or status section. The pipeline adds a `## Feature stage`
-section to the body and keeps it current.
+Do not add a stage, status, or command section. The pipeline adds the
+`## Feature stage` and `## Maintainer commands` sections to the body and keeps
+them current.
 
 After the feature section, include:
 
@@ -94,25 +95,6 @@ After the feature section, include:
 - The exact tracking marker `<!-- speckit-issue: N -->`, where N is the issue number.
 - The exact feature marker `<!-- speckit-feature: specs/NNN-feature-name -->`,
   using the new feature's actual relative directory.
-- A short "Maintainer commands" section with these one-line entries. A command
-  must start a new PR comment.
-  - After the automatic clarification, review the specification and the
-    clarification comment's recommended answers. React with 👍 to that comment
-    to accept the answers, or comment `/speckit-clarify <answer>` to choose
-    another one. Then comment `/speckit-plan [guidance]`. The pipeline then plans, writes tasks,
-    analyzes, and remediates on its own, posts one approval comment listing
-    the API changes, ADRs, and consequential decisions with links to them,
-    and ends planning with an architecture review of the planning artifacts.
-  - React with 👍 to the approval comment to approve it, then comment
-    `/speckit-implement [guidance]`. If the container tests then fail on the
-    implementation's commit, a repair run starts automatically, up to three
-    times per command.
-  - `/speckit-plan <change>` revises the specification and design and replaces
-    the approval comment.
-  - `/speckit-clarify [focus]` revisits the specification. Once a plan
-    exists, it also refreshes the plan and the approval comment.
-  - Submit a review whose summary starts with `/speckit-clarify` or
-    `/speckit-plan` to apply its inline comments in that phase.
 
 If an earlier draft PR for this issue was closed without merging and its
 branch deleted, create a fresh draft PR on `context.branch` from the current
