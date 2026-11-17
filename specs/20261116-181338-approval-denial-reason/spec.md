@@ -68,6 +68,13 @@ The maintainer directed planning to address findings F1–F7 of the plan's archi
   - Reason: One concept had several names (architecture review F5), and the separate claim needed an explicit justification against folding it into approval creation (F1).
   - Alternative: Fold the claim into the existing approval-creation request, which would return the denied outcome instead of a new pending approval.
 
+### Session 2026-11-16 (task reconciliation)
+
+- Q: Which End-User API version accounts for the changed revocation timestamp representation? → A: (Proposed; API-VERSION, DEC-REVOKE) Publish `2.0.0` on the existing routes and document that revocation time comes from `revoked_at`; a revoked denial's `denied_at` retains its original decision time. API-002 includes this consumer migration guidance.
+  - Reason: The earlier `1.3.0` proposal treated the change as additive, but changing an existing response value is backward-incompatible even when its name and type stay the same. Constitution Principle IV and the repository's API-versioning rule require a major version for that change.
+  - Alternative: Keep `1.3.0`; rejected because it does not announce the backward-incompatible timestamp behavior.
+  - Alternative: Add a separate revoke endpoint; not recommended because a major version on existing routes follows the existing repository convention.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Explain a denial to the requesting agent (Priority: P1)
@@ -377,7 +384,7 @@ sequenceDiagram
 ### API Requirements *(design before database)*
 
 - **API-001**: Planning MUST design the optional denial input and all outcome representations needed to deliver it to the requesting agent, without changing endpoint authentication boundaries defined by Accepted `018-approval-endpoint-auth-boundaries`.
-- **API-002**: Relevant broker request, response, read, and synchronization changes MUST be documented in `api/enduser/openapi.yaml` and the end-user API guide before implementation. Agent-facing gateway behavior MUST have an explicit contract and end-to-end example; do not treat an internal sync field as proof of agent delivery.
+- **API-002**: Relevant broker request, response, read, and synchronization changes MUST be documented in `api/enduser/openapi.yaml` and the end-user API guide before implementation. The proposed contract version is `2.0.0` on existing routes because revoked denials retain their original `denied_at`; consumer migration guidance MUST direct revocation-time readers to `revoked_at`. Agent-facing gateway behavior MUST have an explicit contract and end-to-end example; do not treat an internal sync field as proof of agent delivery.
 - **API-003**: The contract MUST specify absence semantics, the length measure, invalid-input behavior, ownership rejection, immutable-decision behavior, and field placement. Existing reason-free denial and approval clients MUST remain supported.
 - **API-004**: API changes and consequential delivery decisions remain proposals until covered by the maintainer's approval in the planning pipeline ([plan.md Approval Items](./plan.md#approval-items)). The accepted FR-010 answer settles exposure scope only; it does not approve the delivery endpoint, its authentication, or the gateway response.
 

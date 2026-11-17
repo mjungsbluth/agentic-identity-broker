@@ -1,4 +1,4 @@
-# Contract delta for api/enduser/openapi.yaml (End-User API 1.2.0 -> 1.3.0)
+# Contract delta for api/enduser/openapi.yaml (End-User API 1.2.0 -> 2.0.0)
 #
 # Status: Proposed. Merges into api/enduser/openapi.yaml only after the maintainer's approval
 # covers API-DENY, API-READ, API-SYNC, API-DELIVER, API-VERSION, and DEC-REVOKE (plan.md,
@@ -6,7 +6,7 @@
 # Only changed or added members are shown; everything else in the existing document is unchanged.
 
 info:
-  version: 1.3.0
+  version: 2.0.0
 
 paths:
   /api/approvals/denial-deliveries:

@@ -148,7 +148,9 @@ only whether a reason was present.
 
 - Agents learn eligible temporary and permanent denials, with the user's explanation when given;
   unclaimed withdrawn denials are suppressed and valid matching approvals retain precedence.
-- Existing clients and reason-free denials keep working; all API changes are additive.
+- Reason-free deny and approve requests keep working. End-User API `2.0.0` on existing routes
+  announces the changed `denied_at` value on revoked denials; consumers use `revoked_at` for
+  revocation time. This follows Constitution Principle IV; it is not an exception.
 - No new cache, configuration key, or dependency.
 - Revocation time and decision time are both recorded and readable by the owner.
 

@@ -183,7 +183,9 @@ RETURNING <explicit full-row column list>;
 ```
 
 Under PostgreSQL READ COMMITTED, a concurrent revoke or claim on the same row makes the second
-`UPDATE` wait for the row lock and re-check its `WHERE`, so at most one of them wins (invariant 6).
+`UPDATE` wait for the row lock and re-check its `WHERE`. Competing claims have one winner.
+Revocation committed first suppresses a claim; a claim committed first may be followed by
+revocation, retaining both timestamps and the possibly in-flight response (invariant 6).
 Every `SELECT`/`RETURNING` list that scans a full `ToolApproval` adds `denial_reason`,
 `denial_delivery_deadline`, `denial_delivered_at`, and `revoked_at` explicitly (no wildcards).
 The deny update sets `denial_reason` and `denial_delivery_deadline` in the same statement as

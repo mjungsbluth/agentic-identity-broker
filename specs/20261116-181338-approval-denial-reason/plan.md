@@ -132,8 +132,10 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
   without deviating from them. Implementation moves it to
   `adrs/` after approval.
 - [x] **Library-First Security**: No cryptography.
-- [x] **Zalando Guidelines**: snake_case fields, `data` envelopes, additive changes, minor version
-  bump. The action-style paths follow the existing approval API conventions.
+- [x] **Zalando Guidelines**: snake_case fields and `data` envelopes. Additive fields plus the
+  changed `denied_at` value on revoked denials require End-User API `2.0.0` on existing routes
+  (API-VERSION); consumer guidance moves revocation-time reads to `revoked_at`. The action-style
+  paths follow the existing approval API conventions.
 - [x] **End-User Docs**: `docs/api/approval-endpoints.md` gains deny-with-reason and delivery examples.
 - [x] **Migration Testing**: Up/down/reapply against PostgreSQL in `tests/integration/migrations/`.
 - [x] **Hexagonal Architecture**: Reason validation lives only in `DenialReason`; deliverability
@@ -163,7 +165,7 @@ specs/20261116-181338-approval-denial-reason/
 ├── data-model.md              # Phase 1
 ├── quickstart.md              # Phase 1
 ├── contracts/
-│   ├── enduser-approvals-openapi.yaml   # End-User API 1.3.0 delta
+│   ├── enduser-approvals-openapi.yaml   # End-User API 2.0.0 delta
 │   ├── extproc-denied-outcome.md        # Agent-facing MCP result
 │   └── observability.md                 # Content-free audit, spans, and safety tests
 ├── 20261116-191554-tool-approval-denial-reason-delivery.md   # ADR draft (Proposed)
@@ -339,14 +341,14 @@ tests; both adapters for every new repository method.
 | API-SYNC | API | `ToolApprovalSummary` adds one nullable field, `denial_deliverable_until` (the Denial Delivery deadline while unclaimed and unrevoked, absent otherwise); the reason is never synchronized | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:248-260 |
 | API-DELIVER | API | New gateway endpoint `POST /api/approvals/denial-deliveries` (`claimDenialDelivery`) with subject token + client assertion: claims the newest deliverable denial for the caller's pair, tool, and arguments hash; `200` with denial, reason, and `denial_delivered_at`, `204` when none, constant `500 internal_error`/`failed to deliver approval denial` for claim/storage failures; committed-but-lost responses stay claimed | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:12-104 |
 | API-MCP | API | Agent receives the Denied Outcome as HTTP 200 MCP `CallToolResult` with `isError: true`, fixed text containing the reason, and `_meta["io.agentic-identity-broker/tool-approval"]`; delivery failures return 403 `approval denial could not be delivered` | specs/20261116-181338-approval-denial-reason/contracts/extproc-denied-outcome.md:9-106 |
-| API-VERSION | API | End-User API `info.version` `1.2.0` → `1.3.0` | specs/20261116-181338-approval-denial-reason/research.md:400-413 |
-| ADR-DELIVERY | ADR | Draft ADR 20261116-191554-tool-approval-denial-reason-delivery: denial reason on `ToolApproval`, at-most-once Denial Delivery on the agent's repeat of the original invocation via a dual-auth claim beside `once` consumption, stored delivery deadline, explicit revocation, reason excluded from sync and telemetry | specs/20261116-181338-approval-denial-reason/20261116-191554-tool-approval-denial-reason-delivery.md:1-222 |
+| API-VERSION | API | Proposed: End-User API `info.version` `1.2.0` → `2.0.0` on existing routes, with consumer guidance using `revoked_at` for revocation time; the changed `denied_at` value on revoked denials requires a major version | specs/20261116-181338-approval-denial-reason/research.md:400-415 |
+| ADR-DELIVERY | ADR | Draft ADR 20261116-191554-tool-approval-denial-reason-delivery: denial reason on `ToolApproval`, at-most-once Denial Delivery on the agent's repeat of the original invocation via a dual-auth claim beside `once` consumption, stored delivery deadline, explicit revocation, reason excluded from sync and telemetry | specs/20261116-181338-approval-denial-reason/20261116-191554-tool-approval-denial-reason-delivery.md:1-224 |
 | DEC-DELIVERY | Decision | Deliver each new denied outcome to the agent at most once (historical records excluded), on its first eligible repeat of the original invocation within the denial delivery window; revocation suppresses unclaimed delivery, while claims committed first may be in flight; valid matching approvals retain precedence over temporary denials under existing freshness semantics, and a stale snapshot fails closed; a lost response is not redelivered | specs/20261116-181338-approval-denial-reason/research.md:121-185 |
 | DEC-TEMP | Decision | Behavior change: after a temporary denial, the agent's first eligible repeat of the original call receives the Denied Outcome instead of a new approval prompt, unless a valid matching approval authorizes it | specs/20261116-181338-approval-denial-reason/spec.md:38-40 |
 | DEC-CLAIM | Decision | Keep Denial Delivery as a separate additive endpoint and the approval system's second at-most-once claim beside ADR 036 `once` consumption, with the domain predicate applied before a compare-and-set write. Alternative: fold the claim into `POST /api/approvals` (return a deliverable denied outcome as `200` instead of a pending approval) | specs/20261116-181338-approval-denial-reason/research.md:186-256 |
-| DEC-WINDOW | Decision | Bound Denial Delivery by a stored `denial_delivery_deadline` = `denied_at` + a fixed 10-minute domain constant, independent of the review deadline `expires_at`; no configuration key. Alternatives: keep reusing `expires_at`; add a configuration key | specs/20261116-181338-approval-denial-reason/research.md:441-463 |
+| DEC-WINDOW | Decision | Bound Denial Delivery by a stored `denial_delivery_deadline` = `denied_at` + a fixed 10-minute domain constant, independent of the review deadline `expires_at`; no configuration key. Alternatives: keep reusing `expires_at`; add a configuration key | specs/20261116-181338-approval-denial-reason/research.md:444-466 |
 | DEC-REVOKE | Decision | Record permanent revocation in a new `revoked_at`; revocation of a denial keeps its original `denied_at` (backward-incompatible value change in the revoke response and owner reads of revoked denials), revoked grants keep today's `denied_at`; the delivery-pending flag is dropped. Alternative: keep a delivery-pending flag as the only revocation marker and document it | specs/20261116-181338-approval-denial-reason/research.md:291-341 |
-| DB-048 | Decision | Migration `048`: nullable `denial_reason TEXT`, `denial_delivery_deadline`, `denial_delivered_at`, and `revoked_at TIMESTAMPTZ`, four check constraints, candidate index; no backfill (historical rows never deliverable, no inferred revocation); DOWN discards all four new fields; reasons stored as plaintext like tool arguments | specs/20261116-181338-approval-denial-reason/data-model.md:133-198 |
+| DB-048 | Decision | Migration `048`: nullable `denial_reason TEXT`, `denial_delivery_deadline`, `denial_delivered_at`, and `revoked_at TIMESTAMPTZ`, four check constraints, candidate index; no backfill (historical rows never deliverable, no inferred revocation); DOWN discards all four new fields; reasons stored as plaintext like tool arguments | specs/20261116-181338-approval-denial-reason/data-model.md:133-200 |
 
 Implementation must not start any item above until the maintainer's 👍 on the approval comment
 covers it. The implementation phase then records that approval in the ADR's Status line and moves
@@ -387,13 +389,15 @@ The review's other notes are also applied: the ADR's Negative consequences list 
 stale-snapshot case; the glossary entries contrast Denial Reason with OPA `reasons` and name the
 Denied Outcome payload; the sync snapshot carries one non-overlapping field.
 
-Because this revision renames the endpoint, schemas, port, and sync fields and changes the
-schema design, `tasks.md` was updated in place for consistency. A later `/speckit-tasks` run may
-regenerate it.
+`tasks.md` uses the final proposed endpoint, schema, port, and sync names and the four-column
+migration design. API-VERSION proposes `2.0.0`, rather than the earlier `1.3.0`, because
+DEC-REVOKE changes the timestamp value returned on existing routes; this follows Constitution
+Principle IV and the repository's API-versioning rule, not an exception to either.
 
 ## Follow-up topics
 
-Implementation opens one follow-up issue per topic under the repository's follow-up rules:
+After maintainer authorization, implementation opens or reuses one follow-up issue per topic
+under the repository's follow-up rules; deferred remediation stays outside the feature tasks:
 
 - **Shared approval request body limit** — apply one request-body bound to every approval route
   (create, approve, scope-preview, denial-delivery); this feature bounds only the deny endpoint

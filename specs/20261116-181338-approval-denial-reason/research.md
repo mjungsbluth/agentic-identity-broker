@@ -400,16 +400,19 @@ new design-system component — not needed for two call sites.
 ## R11 — End-user API version
 
 **Decision** (**API-VERSION**, Proposed): Bump `api/enduser/openapi.yaml` `info.version` from
-`1.2.0` to `1.3.0`.
+`1.2.0` to `2.0.0` on the existing routes; no versioned route or compatibility alias is added.
 
-**Rationale**: The changes are additive: optional request field, optional response fields, one
-sync field, a new endpoint. Existing clients keep working. One value changes meaning: after this
-feature, the revoke response and owner reads of a revoked permanent **denial** report its original
-`denied_at` instead of the revocation time, which moves to the new `revoked_at` (**DEC-REVOKE**).
-The field keeps its name, type, and documented meaning ("time of denial"); revoked grants are
-unchanged.
+**Rationale**: Most changes are additive, but the revoke response and owner reads of a revoked
+permanent **denial** report its original `denied_at` instead of the revocation time, which moves
+to the new `revoked_at` (**DEC-REVOKE**). Keeping the field name and type does not preserve that
+observable behavior. Constitution Principle IV and `ARCHITECTURE.md` API versioning require a
+major version for a confirmed breaking change on existing routes. Consumer guidance explains
+that revocation time now comes from `revoked_at`; revoked grants retain their prior `denied_at`
+behavior. The contract version is separate from the broker release tag.
 
-**Alternatives considered**: `2.0.0` — not warranted; no field is removed or changed in type.
+**Alternatives considered**: `1.3.0` — rejected because the changed timestamp value is not merely
+an additive field. A new revoke endpoint — rejected because the major version on existing routes
+follows the repository convention without another endpoint. These alternatives are not approved.
 
 ## R12 — Delivery vocabulary
 
