@@ -155,15 +155,18 @@ On a Spec Kit draft PR, `/architecture-review` and the automatic review after
 The status comment links the latest review and proposal and names the next step. A new
 review replaces the proposal, so items left unticked stay open until the next review.
 
-Planning ends with an architecture review of the planning artifacts: the feature's `spec.md`,
+Planning includes an architecture review of the planning artifacts: the feature's `spec.md`,
 `plan.md`, `tasks.md`, design documents, and ADR or API contract drafts. It covers five of the
 nine dimensions: ubiquitous language, hexagonal compliance, ADR compliance, data authority, and
 coupling and cohesion. OTel parity, E2E test quality, maintainability, and the behavioral probe
-judge an implementation and wait for the review after `/speckit-implement`. It runs after the
-reanalysis, beside the approval comment, and publishes no remediation proposal. Address its
-findings and answer its questions with `/speckit-plan <guidance>`, which ends with a new review.
-Before implementation, `/architecture-review [focus]` runs this plan review again. A failed plan
-review does not block sign-off; the status comment notes it under the next step.
+judge an implementation and wait for the review after `/speckit-implement`. The plan review runs
+once tasks exist, beside the analysis, and publishes no remediation proposal. Remediation applies
+its findings together with the analysis findings. Where a finding has a real alternative,
+remediation chooses the recommended option and, when the choice is consequential, records it as
+Proposed, so it appears on the approval comment. The reanalysis then checks the result. Before
+implementation, `/architecture-review [focus]` runs the plan review alone; its findings then only
+advise, and `/speckit-plan <guidance>` applies them. A failed plan review does not block planning;
+remediation then resolves the analysis findings alone, and the status comment notes the failure.
 
 The automatic clarification answers its own questions so the specification stays complete, and
 marks each answer Proposed. A **Spec Kit clarification** comment tables each question, the

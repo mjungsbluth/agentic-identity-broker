@@ -146,6 +146,17 @@ traceability and constitutional requirements. Do not implement application
 code. If there is nothing to resolve, make no edits and report `complete`. A
 new session will reanalyze independently.
 
+`context.review`, when present, is the architecture review of this plan from
+the same run; its `url` links the full review. Resolve each of its RED and
+YELLOW items in the planning artifacts as well, and each GREEN item whose fix
+is small. Apply the `change` of an `auto` item. For a `proposed` item, or an
+item with an `alternative`, choose the option you recommend and record it as
+Proposed under the sign-off rules when it is consequential, so it reaches the
+approval comment. Answer a `question` item from the issue, the
+constitution, accepted ADRs, and existing patterns, and apply the sign-off
+rules to that answer. Cite each review item's `id` beside the analysis findings
+in your report, with what you changed or why you left it.
+
 ## implement
 
 `context.approval` is the maintainer's sign-off: the approval comment URL, the

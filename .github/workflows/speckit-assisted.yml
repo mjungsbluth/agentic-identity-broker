@@ -311,6 +311,39 @@ jobs:
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
+  # Once tasks exist, the plan gets its architectural review beside the analysis, and remediation applies both.
+  # Before implementation, a maintainer's /architecture-review runs this plan review alone; its findings only advise.
+  planreview:
+    needs: [route, specify, tasks]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'planreview' || needs.tasks.result == 'success')
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.action == 'planreview' && needs.route.outputs.comment || '0') }}
+      # Before any code exists, the structural dimensions carry the review; the others judge an implementation.
+      dimensions: ubiquitous-language hexagonal-compliance adr-compliance data-authority coupling-cohesion
+      focus: >-
+        The plan and its tasks are complete and this pull request holds no implementation yet. Review the planning artifacts as the
+        design the implementation must follow: the Spec Kit feature directory (spec.md, plan.md, tasks.md, research.md,
+        data-model.md, contracts/, quickstart.md) and any ADR or API contract drafts. Judge each dimension by what the
+        plan commits to build, and report gaps and contradictions in the design, not missing code. Phrase every
+        recommended change as an edit to the planning artifacts.
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
   analyze:
     needs: [route, specify, tasks]
     if: always() && needs.tasks.result == 'success'
@@ -332,8 +365,9 @@ jobs:
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
+  # A failed plan review leaves remediation to the analysis findings.
   remediate:
-    needs: [route, specify, analyze]
+    needs: [route, specify, analyze, planreview]
     if: always() && needs.analyze.result == 'success'
     permissions:
       actions: read
@@ -474,39 +508,6 @@ jobs:
               core.setOutput('error', error.message);
               throw error;
             }
-
-  # A finished plan gets the architectural review before sign-off; its findings return through /speckit-plan.
-  # Before implementation, a maintainer's /architecture-review runs this plan review again.
-  planreview:
-    needs: [route, specify, reanalyze, verify]
-    if: >-
-      always() && needs.route.result == 'success' &&
-      (needs.route.outputs.action == 'planreview' || (needs.reanalyze.result == 'success' && needs.verify.result == 'success'))
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/architecture-review.lock.yml
-    with:
-      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
-      comment: ${{ fromJSON(needs.route.outputs.action == 'planreview' && needs.route.outputs.comment || '0') }}
-      # Before any code exists, the structural dimensions carry the review; the others judge an implementation.
-      dimensions: ubiquitous-language hexagonal-compliance adr-compliance data-authority coupling-cohesion
-      focus: >-
-        Planning has ended and this pull request holds no implementation yet. Review the planning artifacts as the
-        design the implementation must follow: the Spec Kit feature directory (spec.md, plan.md, tasks.md, research.md,
-        data-model.md, contracts/, quickstart.md) and any ADR or API contract drafts. Judge each dimension by what the
-        plan commits to build, and report gaps and contradictions in the design, not missing code. Phrase every
-        recommended change as an edit to the planning artifacts.
-    secrets:
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
-      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
-      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
-      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   # A completed implementation, or a maintainer's /architecture-review, gets the architectural review in this run.
   # A CI repair does not: the implementation it repairs was already reviewed.
