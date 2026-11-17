@@ -1377,10 +1377,12 @@ async function report({ github, context, needs }) {
   const stopping = jobs.filter(([name]) => name !== "planreview");
   const error = stopping.find(([, job]) => job.result === "failure" && job.outputs?.error);
   const failed = stopping.find(([, job]) => job.result === "failure");
+  // A phase that ran without publishing, such as one that exhausted its model budget or was cancelled.
+  const silent = !last && !failed && jobs.find(([name, job]) => phases.includes(name) && ["success", "cancelled"].includes(job.result));
   const stages = state?.stages || {};
   const tip = stages[phases.filter((phase) => stages[phase]).at(-1)];
   // A failed job without its own result must not be explained by a blocker from an earlier run.
-  const stopped = [last, failed ? null : tip].find((entry) => entry?.result.status === "blocked");
+  const stopped = [last, failed || silent ? null : tip].find((entry) => entry?.result.status === "blocked");
   const reanalysis = stages.reanalyze && !stages.implement ? stages.reanalyze : null;
   const findings = reanalysis ? reanalysis.result.findings.filter((finding) => blocking.includes(finding.severity)) : [];
   const details = (entry) => `Details: [${entry.result.phase} report](${entry.comment.html_url})`;
@@ -1412,6 +1414,10 @@ async function report({ github, context, needs }) {
     lines = [reviewJobs.includes(failed[0]) ?
       "The architecture review step failed before publishing. Check the workflow run, then comment `/architecture-review` to run it again." :
       "The job failed before publishing a result. Check the workflow run, then repeat the command."];
+  } else if (silent) {
+    title = `⛔ \`${silent[0]}\` published no result`;
+    lines = ["The phase ended without publishing its report, so this run pushed nothing. " +
+      "Check the workflow run, then repeat the command."];
   } else if (findings.length) {
     title = `⚠️ ${findings.length} blocking finding${findings.length === 1 ? "" : "s"}`;
     lines = [
