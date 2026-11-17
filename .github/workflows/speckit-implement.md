@@ -23,6 +23,7 @@ on:
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
+model: copilot/gpt-6.1-luna
 timeout-minutes: 180
 network:
   allowed:
