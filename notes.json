@@ -8,49 +8,67 @@
     {
       "number": 4,
       "state": "commented",
-      "updated_at": "2026-11-16",
-      "note": "Investigated scheduled scan; targeted docs XML-parser fix committed and draft PR queued. Full verify blocked by OSV API TLS validation; no scanner exemptions changed."
+      "updated_at": "2026-11-17",
+      "note": "Draft #8 published; docs CI passes. Dependency review fails before verdict because repository support/Dependency graph is unavailable; administrator action requested on PR. Keep issue open pending scan validation and merge."
     }
   ],
   "fixes": [
     {
       "issue": 4,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-4-docs-xml-parser",
+      "pr": 8,
+      "branch": "repo-assist/fix-issue-4-docs-xml-parser-ae28a5891f373502",
       "status": "open",
-      "updated_at": "2026-11-16",
-      "note": "Draft PR submission prepared (dab51be). fast-xml-parser 5.12.0 plus three required transitive updates. Check/build/test/docs build pass; verify stops at OSV API TLS failure. Resolve live PR by branch next run."
+      "updated_at": "2026-11-17",
+      "note": "Live head 254006f confirmed. Docs build passes; dependency-review job 133674400418 fails on repository capability/settings, causing gate failure. Separate statuses empty; no code update warranted."
     }
   ],
   "checks": [
     {
       "area": "dependencies",
-      "checked_at": "2026-11-16",
-      "result": "#4: scan reports docs fast-xml-parser 5.11.1; lockfile upgraded to 5.12.0. No Dependabot PRs or other Repo Assist PRs open.",
-      "follow_up": "Confirm the queued draft PR is published and rerun OSV in CI."
+      "checked_at": "2026-11-17",
+      "result": "XML-parser fix is live in draft #8. No Dependabot PRs to bundle. Dependency-review failure is repository capability/settings, not a vulnerability verdict.",
+      "follow_up": "Administrator checks Dependency graph; separately run whole-tree scanner against fixed lockfile."
     },
     {
       "area": "docs",
-      "checked_at": "2026-11-16",
-      "result": "Task 7 QA: inspected Docusaurus README, config and just recipes; clean npm ci and production docs build pass. Build emits CSS minimizer warning; no docs change bundled with dependency fix.",
+      "checked_at": "2026-11-17",
+      "result": "PR #8 Docs build passed at head 254006f; no documentation-build regression identified.",
       "follow_up": null
     },
     {
       "area": "build",
       "checked_at": "2026-11-16",
-      "result": "just check, just build and just test pass. Full just verify stops in security at OSV API TLS certificate validation; remaining tiers not reached.",
-      "follow_up": "Complete full verification in CI; never disable TLS verification."
+      "result": "Prior fix validation: just check/build/test passed; full verify stopped at OSV API TLS validation, later tiers not reached.",
+      "follow_up": "Full verification remains outstanding; no TLS or scanner bypass."
     },
     {
       "area": "repo_assist_prs",
-      "checked_at": "2026-11-16",
-      "result": "No existing Repo Assist PRs. Issue #5 has active spec-driven draft #6; avoid duplicate implementation. Issue #3 smoke-test question already answered.",
+      "checked_at": "2026-11-17",
+      "result": "One open draft #8. Read check runs on both pages, separate statuses, comments and review threads. No review requests or code-caused failures; posted one actionable infrastructure diagnosis.",
+      "follow_up": "Wait for administrator response or changed checks."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-17",
+      "result": "Reviewed classifier, dependency-review/gate and security workflow. Lockfile triggers docs plus dependency review; OSV is separate. Gate fails closed on unsupported dependency review; no weakening proposed.",
+      "follow_up": "Settings action recorded on #8 and monthly #7."
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-17",
+      "result": "Task 5 inspected scripts/verify-go-binary.sh: checks trimpath, DWARF presence/absence and trimmed source locations. No verified low-risk code defect; bash syntax check passes.",
+      "follow_up": null
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-17",
+      "result": "Task 5 fallback 9 inspected CI build-flag coverage: broker/ExtProc native stripped+debug and CIMD/mock/ExtProc image variants already exercise verifier. No redundant test PR proposed; Docker not run here.",
       "follow_up": null
     },
     {
       "area": "release",
-      "checked_at": "2026-11-16",
-      "result": "Documentation transitive dependency fix alone does not warrant a separate release-preparation PR on this workflow-testing fork.",
+      "checked_at": "2026-11-17",
+      "result": "Recent default-branch commits adjust agentic review workflows; only pending Repo Assist change is docs transitive dependency fix. No separate product-release preparation proposed.",
       "follow_up": null
     }
   ],
@@ -58,8 +76,8 @@
   "priorities": [
     {
       "task": 6,
-      "item": "issue-4-docs-xml-parser",
-      "note": "Find PR by branch repo-assist/fix-issue-4-docs-xml-parser; record its number and inspect check runs plus statuses, especially OSV and remaining verification tiers."
+      "item": "pr-8-dependency-review-settings",
+      "note": "Await administrator enabling/verifying Dependency graph and rerunning CI. Re-engage only on changed checks or human activity; separately validate whole-tree OSV before resolving #4. Avoid duplicating active spec-driven #6 for #5."
     }
   ]
 }
