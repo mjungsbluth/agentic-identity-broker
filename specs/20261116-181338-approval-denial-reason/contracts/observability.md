@@ -16,13 +16,13 @@ on MCP routes in the external proxy, as documented in the gateway guide.
 
 `DenialReason.LogValue`, `String`, and `GoString` return `[REDACTED]`. Adapters explicitly obtain
 `Text()` only when persisting or serializing an authorized response. No full approval, request,
-response, or delivered-decision struct is logged.
+response, or `DeliveredDenial` struct is logged.
 
 ## Audit records
 
 | Event | Level / message | When | Attributes |
 |---|---|---|---|
-| `approval.tool_approval.decision_delivered` | Info / `approval delivered` | After a successful broker-side delivery claim commits; never for no-match or failure | `approval_id` (typed ApprovalID), `principal` (typed `id.Principal` under the central policy), `agent_id` (typed AgentID), `denial_reason_present` (boolean) |
+| `approval.tool_approval.denial_delivered` | Info / `approval denial delivered` | After a Denial Delivery claim commits; never for no-match or failure | `approval_id` (typed ApprovalID), `principal` (typed `id.Principal` under the central policy), `agent_id` (typed AgentID), `denial_reason_present` (boolean) |
 
 Use the request-context logger; context enrichment owns trace and caller metadata. The existing
 denial audit remains content-free. Validation errors use fixed sentinels. Dependency failures
@@ -34,8 +34,9 @@ the at-most-once delivery attempt, not an acknowledgement from the MCP client.
 
 | Span | Scope | Kind | Attributes / behavior |
 |---|---|---|---|
-| `approval.deliver` (new) | `approval` | Internal | `approval.id` = claimed typed UUID when known; `approval.outcome` = `delivered` or `none` on success; dependency failures use constant error status and classified `error.type` |
-| `storage.claim_denial_delivery.tool_approval` (new) | `storage` | Client | Reuse `startStorageSpan`; `db.system=postgresql`, `db.operation=ClaimDenialDelivery`; expected no-match is normal flow; failures use the helper's closed `storage.outcome` / `error.type` classifications |
+| `approval.claim_denial_delivery` (new) | `approval` | Internal | `approval.id` = claimed typed UUID when known; `approval.outcome` = `delivered` or `none` on success; dependency failures use constant error status and classified `error.type` |
+| `storage.list_denial_delivery_candidates.tool_approval` (new) | `storage` | Client | Reuse `startStorageSpan`; `db.system=postgresql`, `db.operation=ListDenialDeliveryCandidates`; an empty list is normal flow; failures use the helper's closed `storage.outcome` / `error.type` classifications |
+| `storage.mark_denial_delivered.tool_approval` (new) | `storage` | Client | Reuse `startStorageSpan`; `db.operation=MarkDenialDelivered`; a lost compare-and-set is normal flow, not an error |
 | Outbound claim HTTP transport (existing instrumentation) | `telemetryhttp` | Client | Reuse the shared `telemetryhttp.NewTransport` construction; allowlisted `http.request.method=POST` and integer `http.response.status_code` only; no URL, headers, body, or user text |
 | `extproc.approval.gate` (existing) | `extproc` | Internal | `approval.outcome` remains `deny`, `proceed`, or `elicit`; a delivered denial is `deny`, not an error caused by the user |
 

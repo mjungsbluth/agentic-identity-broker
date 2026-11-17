@@ -4,7 +4,9 @@
 
 **Input**: Feature specification from `specs/20261116-181338-approval-denial-reason/spec.md`
 
-**Status**: Planned. FR-010 was accepted on the clarification comment. Every item in
+**Status**: Planned. FR-010 was accepted on the clarification comment. This revision applies
+the maintainer-directed architecture review findings F1–F7
+([Architecture review resolution](#architecture-review-resolution)). Every item in
 [Approval Items](#approval-items) needs the maintainer's 👍 on the approval comment before
 implementation.
 
@@ -14,25 +16,30 @@ Let the denying user attach an optional reason of at most 500 Unicode code point
 approval denial, and deliver it once to the requesting agent with the denied outcome.
 
 - **Domain.** `ToolApproval.Deny` takes an optional immutable `DenialReason` value object and
-  records it in the same transition as `status=denied`. The value object enforces absence
-  semantics, the code-point limit, and redaction in logs
-  ([data model](./data-model.md), [R1–R2](./research.md#r1--where-the-reason-lives)).
+  records it, with a Denial Delivery deadline 10 minutes after the decision, in the same
+  transition as `status=denied`. The value object is the only authority for absence semantics,
+  the code-point limit, and redaction in logs. `ToolApproval.IsDenialDeliverable` is the only
+  deliverability rule ([data model](./data-model.md), [R1–R2](./research.md#r1--where-the-reason-lives),
+  [R13](./research.md#r13--denial-delivery-window)).
 - **Browser API.** `POST /api/approvals/{id}/deny` accepts `denial_reason`; deny responses and
-  approval reads return it to the owner. Invalid input returns `400 invalid_denial_reason` and
-  leaves the approval pending ([R3](./research.md#r3--browser-and-non-browser-input-contract)).
-- **Agent delivery.** When the agent repeats the original `tools/call` before the approval's
-  `expires_at`, while the denial is unrevoked and no matching approval takes precedence under
-  FR-009, the ExtProc gate claims the denied decision through the new dual-auth gateway
-  endpoint `POST /api/approvals/deliveries` and answers with an MCP tool error result that
-  contains the reason. Each decision is delivered at most once; subsequent calls keep today's behavior
-  (accepted FR-010) ([R4–R6](./research.md#r4--how-the-requesting-agent-receives-the-outcome),
+  approval reads return it to the owner. The handler bounds the body and checks the JSON type;
+  the domain validates the text. Invalid input returns `400 invalid_denial_reason` and leaves the
+  approval pending ([R3](./research.md#r3--browser-and-non-browser-input-contract)).
+- **Denial Delivery.** When the agent repeats the original `tools/call` within the denial's
+  delivery window, while the denial is unrevoked and no matching approval takes precedence under
+  FR-009, the ExtProc gate claims it through the new dual-auth gateway endpoint
+  `POST /api/approvals/denial-deliveries` and answers with the Denied Outcome, an MCP tool error
+  result that contains the reason. Each denial is delivered at most once; subsequent calls keep
+  today's behavior (accepted FR-010). This is a second at-most-once claim next to `once`
+  consumption ([R4–R6](./research.md#r4--how-the-requesting-agent-receives-the-outcome),
   [agent contract](./contracts/extproc-denied-outcome.md)).
-- **Sync.** Summaries add `expires_at`, `denial_delivered_at`, and `denial_delivery_pending` so
-  the gate calls the broker only while an undelivered, unrevoked denial exists; the reason never
-  enters sync.
-- **Persistence.** Atomic migration `048` adds two nullable columns, a false-default
-  delivery-pending flag, three check constraints, and a partial index; both adapters implement
-  atomic deny, claim, and revocation suppression ([R7](./research.md#r7--persistence)).
+- **Sync.** Summaries add one derived field, `denial_deliverable_until`, so the gate calls the
+  broker only while an unclaimed, unrevoked denial exists; the reason never enters sync.
+- **Persistence.** Atomic migration `048` adds four nullable columns (`denial_reason`,
+  `denial_delivery_deadline`, `denial_delivered_at`, `revoked_at`), four check constraints, and a
+  candidate index. Revocation records `revoked_at` and keeps a denial's `denied_at`; both adapters
+  implement atomic deny, the compare-and-set claim, and revocation
+  ([R7](./research.md#r7--persistence-and-explicit-revocation)).
 - **Confidentiality.** No log, span, metric, or error carries the reason; LOGGING.md §6.1 gains
   the rule ([R8–R9](./research.md#r8--logging-tracing-and-metrics)).
 - **UI.** Both denial surfaces get an accessible optional-reason form and a read-only recorded
@@ -83,12 +90,15 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 
 - [x] **Domain Model**: [data-model.md](./data-model.md) documents the extended `ToolApproval`
   aggregate, the `DenialReason` value object, invariants, and state transitions.
-- [x] **Domain Concepts**: Implementation adds **Denial Reason** and **Decision Delivery** to the
-  `ARCHITECTURE.md` glossary and the root `AGENTS.md` glossary, and extends the
-  `ApprovalDenied` event text.
+- [x] **Domain Concepts**: Implementation adds **Denial Reason** (user-authored text with no
+  authority, unlike OPA `reasons`), **Denial Delivery**, **Denial Delivery Deadline**, and
+  **Denied Outcome** to the `ARCHITECTURE.md` glossary and the root `AGENTS.md` glossary, defines
+  `revoked_at` in the ToolApproval entry, and extends the `ApprovalDenied` event text
+  ([R12](./research.md#r12--delivery-vocabulary)).
 - [x] **Entity IDs**: No new entity; `id.ApprovalID` exists (ADR 013-strongly-typed-entity-ids).
-- [x] **Configuration Design**: No configuration key changes. The delivery window reuses each
-  approval's existing `expires_at`.
+- [x] **Configuration Design**: No configuration key changes. The delivery window is a fixed
+  domain constant stored per denial (DEC-WINDOW); `approvals.pending_ttl` keeps bounding only the
+  review.
 - [x] **Config Examples**: Not applicable.
 - [x] **Helm Deployment Contract**: Not applicable; the migration Job runs `048` unchanged.
 - [x] **API Design First**: [contracts/enduser-approvals-openapi.yaml](./contracts/enduser-approvals-openapi.yaml)
@@ -97,7 +107,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **API Documentation**: `api/enduser/openapi.yaml`, `docs/api/approval-endpoints.md`,
   `docs/api/enduser-api.md`, and `docs/guides/token-exchange-gateway.md`.
 - [ ] **API Changes**: Pending maintainer sign-off on API-DENY, API-READ, API-SYNC, API-DELIVER,
-  API-MCP, and API-VERSION. This gate stays open until the approval comment receives a 👍.
+  API-MCP, API-VERSION, and the revoke-response change in DEC-REVOKE. This gate stays open until the approval comment receives a 👍.
 - [x] **Database Design**: `048_add_tool_approval_denial_reason.{up,down}.sql`
   ([data-model.md](./data-model.md#postgresql-schema--migration-048_add_tool_approval_denial_reason)).
 - [x] **E2E Acceptance Tests**: Planned for all 13 scenarios before implementation
@@ -117,19 +127,22 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](../.
 - [x] **Architecture Docs**: `ARCHITECTURE.md` approval sections (endpoint list, gate order, sync
   fields, glossary) and the ADR index in the root `AGENTS.md`.
 - [x] **ADRs**: Draft [ADR 20261116-191554-tool-approval-denial-reason-delivery](./20261116-191554-tool-approval-denial-reason-delivery.md)
-  (Proposed) extends `018-approval-endpoint-auth-boundaries` and
-  `036-extproc-approval-cache-and-gate` without deviating from them. Implementation moves it to
+  (Proposed) extends `018-approval-endpoint-auth-boundaries`,
+  `036-extproc-approval-cache-and-gate`, and `045-agent-subject-impersonation` decision 6a
+  without deviating from them. Implementation moves it to
   `adrs/` after approval.
 - [x] **Library-First Security**: No cryptography.
 - [x] **Zalando Guidelines**: snake_case fields, `data` envelopes, additive changes, minor version
   bump. The action-style paths follow the existing approval API conventions.
 - [x] **End-User Docs**: `docs/api/approval-endpoints.md` gains deny-with-reason and delivery examples.
 - [x] **Migration Testing**: Up/down/reapply against PostgreSQL in `tests/integration/migrations/`.
-- [x] **Hexagonal Architecture**: Validation and deliverability live in the domain
-  (`DenialReason`, `ToolApproval`, `approval.Service`); handlers parse and map errors; adapters
-  implement ports; ExtProc talks to the broker only over HTTP.
-- [x] **Persistence Patterns**: ISP port `ToolApprovalDeliveryRepository`; memory and PostgreSQL
-  adapters; `StorageError` wrapping (ADR 004-storage-layer-architecture).
+- [x] **Hexagonal Architecture**: Reason validation lives only in `DenialReason`; deliverability
+  lives only in `ToolApproval.IsDenialDeliverable`, which `approval.Service.ClaimDenialDelivery`
+  applies before a compare-and-set write. Handlers parse and map errors; adapters narrow
+  candidates and guard concurrency; ExtProc reads a broker-derived sync field and talks to the
+  broker only over HTTP.
+- [x] **Persistence Patterns**: ISP port `ToolApprovalDenialDeliveryRepository`; memory and
+  PostgreSQL adapters; `StorageError` wrapping (ADR 004-storage-layer-architecture).
 - [x] **Coding standards**: LOGGING.md and OPENTELEMETRY.md review checklists apply to the new
   audit record and span; safety tests assert the reason is absent from logs and spans.
   [contracts/observability.md](./contracts/observability.md) specifies the event, span families,
@@ -162,15 +175,16 @@ specs/20261116-181338-approval-denial-reason/
 ### Source Code (repository root)
 
 ```text
-internal/domain/storage/tool_approval.go          # DenialReason, Deny(reason), deliverability
-internal/domain/approval/service.go               # DenyApproval(reason), ClaimDenialDelivery, ApprovalDetail
-internal/ports/storage.go                         # Deny signature, ToolApprovalDeliveryRepository
+internal/domain/storage/tool_approval.go          # Deny(reason), DenialDeliveryWindow, IsDenialDeliverable, ClaimDenialDelivery
+internal/domain/storage/denial_reason.go          # DenialReason value object
+internal/domain/approval/service.go               # DenyApproval(raw reason), ClaimDenialDelivery, ApprovalDetail
+internal/ports/storage.go                         # Deny signature, ToolApprovalDenialDeliveryRepository
 internal/adapters/storage/memory/tool_approval_repository.go
 internal/adapters/storage/postgres/tool_approval_repository.go
-internal/adapters/http/handlers/approval/         # deny, get/pending/permanent, sync, new delivery_handler.go
-internal/adapters/http/routing/enduser.go         # POST /api/approvals/deliveries (dual auth)
+internal/adapters/http/handlers/approval/         # deny, revoke, get/pending/permanent, sync, new denial_delivery_handler.go
+internal/adapters/http/routing/enduser.go         # POST /api/approvals/denial-deliveries (dual auth)
 internal/app/builder.go                           # wire delivery repository and handler
-internal/extproc/approval/{cache,client,gate}.go  # Record fields, ClaimDelivery, gate step
+internal/extproc/approval/{cache,client,gate}.go  # Record.DenialDeliverableUntil, ClaimDenialDelivery, gate step
 internal/extproc/server/server.go                 # render denied CallToolResult
 migrations/048_add_tool_approval_denial_reason.{up,down}.sql
 api/enduser/openapi.yaml
@@ -206,8 +220,8 @@ approval components. No new package or bounded context.
 - [x] Phase 2.7 (entity boilerplate): skip — no new entity.
 
 Suggested order inside Phase 3+: domain value object and aggregate → ports and both adapters with
-migration → deny handler and reads → delivery service, handler, route → ExtProc client, cache, gate,
-renderer → SPA → docs and glossary.
+migration → deny and revoke handlers and reads → denial-delivery service, handler, route → ExtProc
+client, cache, gate, renderer → SPA → docs and glossary.
 
 ## Testing Strategy
 
@@ -287,16 +301,23 @@ surfaces, using surface-specific filenames when a state occurs on both pages.
 
 - **Domain**: `DenialReason` absence before length validation (including 501 whitespace code
   points), exact retention, nonblank 500/501 code points (`é`, emoji), U+0000,
-  redaction through `slog`, `%v`, `%#v`; `ToolApproval.Deny` invariants; service deny and claim
-  paths, including ownership, expiry, competing decisions, and audit record content.
-- **Handlers**: deny body parsing (types, size limit, error codes without echo), read models,
-  sync summary fields, delivery handler status mapping including constant `500 internal_error`
-  for claim/storage timeout, connection, and unexpected service failures without content echo.
-- **Adapters**: memory and PostgreSQL deny with reason, claim once under concurrency, newest
-  selection, window, `approved_at` exclusion and delivery-pending eligibility, column lists; deny-permanently →
-  revoke → repeat before expiry separately from revoked grants, with claim/revoke lock-order races.
-- **Migration**: `048` up, down, reapply; constraint rejection of a reason on non-denied rows.
-- **ExtProc**: cache candidate detection, client claim (200/204/errors, no logging of body), gate
+  redaction through `slog`, `%v`, `%#v`; `ToolApproval.Deny` invariants and deadline;
+  the deliverability conformance table ([data model](./data-model.md#deliverability-conformance-table))
+  against `IsDenialDeliverable`, `DenialDeliverableUntil`, and `ClaimDenialDelivery`; service deny
+  (domain validation before ownership) and claim paths, including candidate ordering, lost
+  compare-and-set, ownership, expiry, competing decisions, and audit record content.
+- **Handlers**: deny body parsing (body bound, JSON type, mapping of domain sentinels without
+  echo, no handler-side trimming or counting), revoke response (`denied_at` kept, `revoked_at`),
+  read models, sync `denial_deliverable_until` per conformance row, denial-delivery handler status
+  mapping including constant `500 internal_error` for claim/storage timeout, connection, and
+  unexpected service failures without content echo.
+- **Adapters**: memory and PostgreSQL deny with reason and deadline, candidate listing, the
+  conformance table through the service, compare-and-set under concurrency, revocation recording
+  `revoked_at` and keeping a denial's `denied_at`, column lists; deny-permanently → revoke → repeat
+  within the window separately from revoked grants, with claim/revoke lock-order races.
+- **Migration**: `048` up, down, reapply; every check constraint; historical rows with all new
+  columns `NULL`.
+- **ExtProc**: cache candidate detection from `denial_deliverable_until` per conformance row, client claim (200/204/errors, no logging of body), gate
   order (permanent with/without candidate, approved precedence over temporary denial,
   grant/revocation overlap races under existing freshness semantics, read-then-claim, fail closed),
   server rendering of the MCP result, and a safety test asserting the reason is absent from logs,
@@ -313,16 +334,19 @@ tests; both adapters for every new repository method.
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-DENY | API | `POST /api/approvals/{id}/deny` accepts optional `denial_reason` (normalize whitespace to absence before limiting nonblank text to 500 code points, including 501 whitespace code points; U+0000, non-string/non-null, or body >16 KiB → `400 invalid_denial_reason` without echo) and `DenyResponse` returns it | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:101-194 |
-| API-READ | API | `ToolApprovalDetail` (get, pending, permanent) adds owner-visible `denial_reason`, present only when recorded | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:196-202 |
-| API-SYNC | API | `ToolApprovalSummary` adds `expires_at`, nullable `denial_delivered_at`, and required `denial_delivery_pending` (false for historical, claimed, or revoked decisions); the reason is never synchronized | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:204-219 |
-| API-DELIVER | API | New gateway endpoint `POST /api/approvals/deliveries` with subject token + client assertion: claims the newest undelivered, unrevoked, never-approved denial for the caller's pair, tool, and arguments hash before `expires_at`; `200` with decision and reason, `204` when none, constant `500 internal_error`/`failed to deliver approval decision` for claim/storage failures; committed-but-lost responses stay claimed | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:11-99 |
-| API-MCP | API | Agent receives the delivered denial as HTTP 200 MCP `CallToolResult` with `isError: true`, fixed text containing the reason, and `_meta["io.agentic-identity-broker/tool-approval"]`; delivery failures return 403 `approval decision could not be delivered` | specs/20261116-181338-approval-denial-reason/contracts/extproc-denied-outcome.md:9-101 |
-| API-VERSION | API | End-User API `info.version` `1.2.0` → `1.3.0` | specs/20261116-181338-approval-denial-reason/research.md:297-305 |
-| ADR-DELIVERY | ADR | Draft ADR 20261116-191554-tool-approval-denial-reason-delivery: denial reason on `ToolApproval`, at-most-once delivery on the agent's repeat of the original invocation via a dual-auth claim, reason excluded from sync and telemetry | specs/20261116-181338-approval-denial-reason/20261116-191554-tool-approval-denial-reason-delivery.md:1-160 |
-| DEC-DELIVERY | Decision | Deliver each new denied outcome to the agent at most once (historical records excluded), on its first eligible repeat of the original invocation before `expires_at`; revocation suppresses unclaimed delivery, while claims committed first may be in flight; valid matching approvals retain precedence over temporary denials under existing freshness semantics; a lost response is not redelivered | specs/20261116-181338-approval-denial-reason/research.md:87-147 |
-| DEC-TEMP | Decision | Behavior change: after a temporary denial, the agent's first eligible repeat of the original call receives the denied outcome instead of a new approval prompt, unless a valid matching approval authorizes it | specs/20261116-181338-approval-denial-reason/spec.md:38-40 |
-| DB-048 | Decision | Migration `048`: nullable `denial_reason TEXT`, `denial_delivered_at TIMESTAMPTZ`, and `denial_delivery_pending BOOLEAN NOT NULL DEFAULT FALSE`, three check constraints, partial index excluding revoked records; no backfill; DOWN discards all three new fields; reasons stored as plaintext like tool arguments | specs/20261116-181338-approval-denial-reason/data-model.md:96-153 |
+| API-DENY | API | `POST /api/approvals/{id}/deny` accepts optional `denial_reason` (whitespace-only normalizes to absence before limiting nonblank text to 500 code points, including 501 whitespace code points; U+0000, non-string/non-null, or body >16 KiB → `400 invalid_denial_reason` without echo; the domain validates, the schema pattern is advisory) and `DenyResponse` returns it | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:105-233 |
+| API-READ | API | `ToolApprovalDetail` (get, pending, permanent) adds owner-visible `denial_reason` and `revoked_at`, each present only when recorded; the revoke response (`DenyResponse`) adds `denial_reason` and `revoked_at` | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:158-247 |
+| API-SYNC | API | `ToolApprovalSummary` adds one nullable field, `denial_deliverable_until` (the Denial Delivery deadline while unclaimed and unrevoked, absent otherwise); the reason is never synchronized | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:248-260 |
+| API-DELIVER | API | New gateway endpoint `POST /api/approvals/denial-deliveries` (`claimDenialDelivery`) with subject token + client assertion: claims the newest deliverable denial for the caller's pair, tool, and arguments hash; `200` with denial, reason, and `denial_delivered_at`, `204` when none, constant `500 internal_error`/`failed to deliver approval denial` for claim/storage failures; committed-but-lost responses stay claimed | specs/20261116-181338-approval-denial-reason/contracts/enduser-approvals-openapi.yaml:12-104 |
+| API-MCP | API | Agent receives the Denied Outcome as HTTP 200 MCP `CallToolResult` with `isError: true`, fixed text containing the reason, and `_meta["io.agentic-identity-broker/tool-approval"]`; delivery failures return 403 `approval denial could not be delivered` | specs/20261116-181338-approval-denial-reason/contracts/extproc-denied-outcome.md:9-106 |
+| API-VERSION | API | End-User API `info.version` `1.2.0` → `1.3.0` | specs/20261116-181338-approval-denial-reason/research.md:400-413 |
+| ADR-DELIVERY | ADR | Draft ADR 20261116-191554-tool-approval-denial-reason-delivery: denial reason on `ToolApproval`, at-most-once Denial Delivery on the agent's repeat of the original invocation via a dual-auth claim beside `once` consumption, stored delivery deadline, explicit revocation, reason excluded from sync and telemetry | specs/20261116-181338-approval-denial-reason/20261116-191554-tool-approval-denial-reason-delivery.md:1-222 |
+| DEC-DELIVERY | Decision | Deliver each new denied outcome to the agent at most once (historical records excluded), on its first eligible repeat of the original invocation within the denial delivery window; revocation suppresses unclaimed delivery, while claims committed first may be in flight; valid matching approvals retain precedence over temporary denials under existing freshness semantics, and a stale snapshot fails closed; a lost response is not redelivered | specs/20261116-181338-approval-denial-reason/research.md:121-185 |
+| DEC-TEMP | Decision | Behavior change: after a temporary denial, the agent's first eligible repeat of the original call receives the Denied Outcome instead of a new approval prompt, unless a valid matching approval authorizes it | specs/20261116-181338-approval-denial-reason/spec.md:38-40 |
+| DEC-CLAIM | Decision | Keep Denial Delivery as a separate additive endpoint and the approval system's second at-most-once claim beside ADR 036 `once` consumption, with the domain predicate applied before a compare-and-set write. Alternative: fold the claim into `POST /api/approvals` (return a deliverable denied outcome as `200` instead of a pending approval) | specs/20261116-181338-approval-denial-reason/research.md:186-256 |
+| DEC-WINDOW | Decision | Bound Denial Delivery by a stored `denial_delivery_deadline` = `denied_at` + a fixed 10-minute domain constant, independent of the review deadline `expires_at`; no configuration key. Alternatives: keep reusing `expires_at`; add a configuration key | specs/20261116-181338-approval-denial-reason/research.md:441-463 |
+| DEC-REVOKE | Decision | Record permanent revocation in a new `revoked_at`; revocation of a denial keeps its original `denied_at` (backward-incompatible value change in the revoke response and owner reads of revoked denials), revoked grants keep today's `denied_at`; the delivery-pending flag is dropped. Alternative: keep a delivery-pending flag as the only revocation marker and document it | specs/20261116-181338-approval-denial-reason/research.md:291-341 |
+| DB-048 | Decision | Migration `048`: nullable `denial_reason TEXT`, `denial_delivery_deadline`, `denial_delivered_at`, and `revoked_at TIMESTAMPTZ`, four check constraints, candidate index; no backfill (historical rows never deliverable, no inferred revocation); DOWN discards all four new fields; reasons stored as plaintext like tool arguments | specs/20261116-181338-approval-denial-reason/data-model.md:133-198 |
 
 Implementation must not start any item above until the maintainer's 👍 on the approval comment
 covers it. The implementation phase then records that approval in the ADR's Status line and moves
@@ -341,6 +365,39 @@ the draft to `adrs/20261116-191554-tool-approval-denial-reason-delivery.md`.
   feature-local draft path so links from the frozen specification and plan still resolve.
 - `tasks.md` orders the two P1 stories (US1, then US3) before the P2 compatibility story (US2).
   US1 is a candidate MVP slice, not a release that can omit privacy or compatibility gates.
+
+## Architecture review resolution
+
+The maintainer directed this planning run to address findings F1–F7 of the plan's architecture
+review. Each finding's recommended change was applied; none conflicts with an accepted ADR or the
+accepted FR-010 answer. F1, F3, and F4 have real alternatives, so each is registered below as a
+Proposed decision with its alternative.
+
+| Finding | Resolution | Where |
+|---|---|---|
+| F1 Second at-most-once claim beside `once` consumption | Keep a separate additive endpoint; justify it against create and consume and record it as the second at-most-once claim (**DEC-CLAIM**; alternative: fold the claim into `POST /api/approvals`) | [R5](./research.md#r5--denial-delivery-claim-endpoint-authentication-and-relation-to-once-consumption), ADR draft Decision 3 and Consequences |
+| F2 Deny handler duplicates `DenialReason` rules | Handler bounds the body, checks the JSON type, passes raw text, and maps domain sentinels; the domain constructor is the only authority; contract pattern and browser check are advisory | [R2–R3](./research.md#r3--browser-and-non-browser-input-contract), ADR draft Decision 1 |
+| F3 Revocation recorded only by an implicit flag | Explicit `revoked_at`; revocation keeps a denial's `denied_at`; the delivery-pending flag is removed (**DEC-REVOKE**; alternative: keep and document the flag) | [R7](./research.md#r7--persistence-and-explicit-revocation), [data model](./data-model.md) |
+| F4 `expires_at` holds two facts | Stored `denial_delivery_deadline` = `denied_at` + fixed 10 minutes (**DEC-WINDOW**; alternatives: keep `expires_at`, or a configuration key) | [R13](./research.md#r13--denial-delivery-window) |
+| F5 Inconsistent delivery vocabulary | One term, **Denial Delivery**; `/api/approvals/denial-deliveries`; `denial_delivered_at` in every schema; sync field `denial_deliverable_until` | [R12](./research.md#r12--delivery-vocabulary) |
+| F6 Anemic claim service, scattered predicate | `ToolApproval.IsDenialDeliverable` is the only rule; the service applies it before a compare-and-set; one conformance table pins both adapters, sync, and ExtProc | [R5](./research.md#r5--denial-delivery-claim-endpoint-authentication-and-relation-to-once-consumption), [data model](./data-model.md#deliverability-conformance-table) |
+| F7 ADR draft omits `045-agent-subject-impersonation` | Added to Context, Decision 3, and Relationships | ADR draft |
+
+The review's other notes are also applied: the ADR's Negative consequences list the fail-closed
+stale-snapshot case; the glossary entries contrast Denial Reason with OPA `reasons` and name the
+Denied Outcome payload; the sync snapshot carries one non-overlapping field.
+
+Because this revision renames the endpoint, schemas, port, and sync fields and changes the
+schema design, `tasks.md` was updated in place for consistency. A later `/speckit-tasks` run may
+regenerate it.
+
+## Follow-up topics
+
+Implementation opens one follow-up issue per topic under the repository's follow-up rules:
+
+- **Shared approval request body limit** — apply one request-body bound to every approval route
+  (create, approve, scope-preview, denial-delivery); this feature bounds only the deny endpoint
+  ([R3](./research.md#r3--browser-and-non-browser-input-contract)).
 
 ## Complexity Tracking
 

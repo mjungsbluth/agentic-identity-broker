@@ -60,9 +60,11 @@ Report each run's results only in the session result, not in this guide or other
 8. Submit 501 Unicode whitespace code points (for example U+2003) from each browser surface
    and directly by API within the 16-KiB body bound. Expect denial without a reason, not a length
    error. Repeat with nonblank text over 500 code points: expect rejection while still pending.
-9. On an independent request deny permanently, then revoke before delivery and expiry. Expect
-   the next repeat to follow the normal new-approval flow, a direct claim to return 204 (delivery-pending cleared), and the
-   owner reread to retain the reason. Test revoked previous grants separately. In both adapters,
+9. On an independent request deny permanently, then revoke before delivery and before the
+   denial delivery deadline. Expect the next repeat to follow the normal new-approval flow, a
+   direct claim to return 204, the sync summary to omit `denial_deliverable_until`, and the
+   owner reread and revoke response to retain the reason and the original `denied_at` next to
+   `revoked_at`. Test revoked previous grants separately. In both adapters,
    cover both claim/revoke lock orders: revocation first suppresses a claim; claim first may be
    in flight, never redelivered.
 10. Synchronize a valid approval overlapping a temporary denial: expect the repeat to proceed
@@ -70,9 +72,13 @@ Report each run's results only in the session result, not in this guide or other
     before/after the mutation under existing freshness guarantees. A permanent denial still
     blocks first even when an approval matches.
 11. Inject claim/storage timeout, connection, and unexpected service failures in handler tests:
-    expect `500` with only `{"error":"internal_error","message":"failed to deliver approval decision"}`.
+    expect `500` with only `{"error":"internal_error","message":"failed to deliver approval denial"}`.
     ExtProc must fail closed with its constant 403, no forwarding or new approval, and no content
     export. A committed-but-lost claim must stay claimed.
-12. Run Scenario 3.5 in the frontend suite for the full successful/rejected browser → broker →
+12. Deny an approval 9 minutes into its review window and repeat the call 5 minutes later:
+    expect the Denied Outcome, because the denial delivery deadline is 10 minutes after the
+    denial, not the review deadline. Repeat more than 10 minutes after a denial: expect the
+    normal flow without a reason.
+13. Run Scenario 3.5 in the frontend suite for the full successful/rejected browser → broker →
     ExtProc privacy journey. Inspect captured browser console and all components' logs, spans,
     metrics, and audit metadata. Expect no reason content and only permitted non-content metadata.

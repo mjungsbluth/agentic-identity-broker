@@ -1,26 +1,30 @@
 # Contract delta for api/enduser/openapi.yaml (End-User API 1.2.0 -> 1.3.0)
 #
 # Status: Proposed. Merges into api/enduser/openapi.yaml only after the maintainer's approval
-# covers API-DENY, API-READ, API-SYNC, API-DELIVER, and API-VERSION (plan.md, Approval Items).
+# covers API-DENY, API-READ, API-SYNC, API-DELIVER, API-VERSION, and DEC-REVOKE (plan.md,
+# Approval Items). Vocabulary: research.md R12 ("Denial Delivery").
 # Only changed or added members are shown; everything else in the existing document is unchanged.
 
 info:
   version: 1.3.0
 
 paths:
-  /api/approvals/deliveries:
+  /api/approvals/denial-deliveries:
     post:
-      operationId: claimApprovalDecisionDelivery
-      summary: Claim the denied outcome for a repeated tool invocation
+      operationId: claimDenialDelivery
+      summary: Claim the Denial Delivery for a repeated tool invocation
       description: |
         Called by ExtProc when the agent repeats a tool invocation whose approval was denied.
         The broker derives the principal and agent from the authenticated subject token and
-        atomically claims the newest denied approval of that pair whose tool name and canonical
-        arguments hash equal the request, that was never approved, that has not been delivered or
-        revoked (`denial_delivery_pending` true), and whose `expires_at` is in the future.
-        A claimed decision is never claimed again. Historical records have no pending delivery.
-        Revocation suppresses unclaimed delivery without changing the owner's reason; a claim
-        committed before revocation may already be in flight.
+        claims the newest deliverable denial of that pair whose tool name and canonical
+        arguments hash equal the request. A denial is deliverable while it is unclaimed,
+        unrevoked, and before its Denial Delivery deadline (10 minutes after `denied_at`);
+        pending, approved, revoked-grant, and historical records are never deliverable.
+        A claimed denial is never claimed again. Revocation suppresses unclaimed delivery
+        without changing the owner's reason; a claim committed before revocation may already
+        be in flight.
+        This is the approval system's second at-most-once claim, separate from
+        `POST /api/approvals/{id}/consume` for `once` approvals.
         ExtProc preserves gate precedence: a permanent denial blocks first; otherwise a valid
         matching approval proceeds without a claim. This endpoint checks record eligibility,
         not the gateway's freshness-bounded approval snapshot.
@@ -38,26 +42,26 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DeliveryClaimRequest"
+              $ref: "#/components/schemas/DenialDeliveryClaimRequest"
             example:
               tool_name: deploy_release
               arguments: { project: production, version: v2.3.0 }
       responses:
         "200":
-          description: A denied decision was claimed for this invocation.
+          description: A Denial Delivery was claimed for this invocation.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DeliveryClaimResponse"
+                $ref: "#/components/schemas/DenialDeliveryClaimResponse"
               example:
                 data:
                   id: 990e8400-e29b-41d4-a716-446655440020
                   status: denied
                   denied_at: "2026-11-16T10:00:20Z"
                   denial_reason: Use the staging project instead.
-                  delivered_at: "2026-11-16T10:00:31Z"
+                  denial_delivered_at: "2026-11-16T10:00:30Z"
         "204":
-          description: No deliverable decision matches this invocation; continue with the normal approval flow.
+          description: No deliverable denial matches this invocation; continue with the normal approval flow.
         "400":
           description: Malformed body, missing `tool_name`, or `arguments` that is not an object.
           content:
@@ -81,7 +85,7 @@ paths:
         "500":
           description: |
             Claim/storage timeout, connection failure, or unexpected claim/service failure.
-            Constant error code `internal_error` and message `failed to deliver approval decision`.
+            Constant error code `internal_error` and message `failed to deliver approval denial`.
             Never include raw dependency errors, credentials, or reason text. A failure whose
             claim committed before the response was lost does not undo delivery or permit redelivery.
           content:
@@ -90,7 +94,7 @@ paths:
                 $ref: "#/components/schemas/ApprovalError"
               example:
                 error: internal_error
-                message: failed to deliver approval decision
+                message: failed to deliver approval denial
         "503":
           description: Subject-token validation or agent-subject detection is unavailable or failed; the request fails closed.
           content:
@@ -106,10 +110,13 @@ paths:
         until revocation, regardless of arguments or session. Clears parameter constraints.
         ExtProc enforces the denial before matching approvals and does not create another approval request.
         An optional `denial_reason` is recorded in the same transition and can never be added,
-        changed, or removed afterwards. It is shared with the requesting agent once, when the
-        agent repeats the original invocation before `expires_at`, provided the denial has not
-        been revoked and no valid matching approval takes precedence (permanent denial still
-        blocks first). Revocation atomically suppresses unclaimed delivery and retains the reason.
+        changed, or removed afterwards. The denial also gets a Denial Delivery deadline 10
+        minutes after `denied_at`, independent of `expires_at`. The denied outcome and reason are
+        shared with the requesting agent once, when the agent repeats the original invocation
+        before that deadline, provided the denial has not been revoked and no valid matching
+        approval takes precedence (permanent denial still blocks first). Revocation suppresses
+        unclaimed delivery and retains the reason.
+        The broker's domain validates `denial_reason`; the schema pattern below is advisory.
         Auth: acting user principal from the browser auth layer; principal must match.
       requestBody:
         required: false
@@ -147,6 +154,30 @@ paths:
                 message: denial_reason must be at most 500 characters
         # 401, 403, 404, and 410 are unchanged. A second denial attempt, with or without a
         # different reason, returns the existing 410 and leaves the recorded reason unchanged.
+
+  /api/approvals/{id}/revoke:
+    post:
+      description: |
+        Revokes a permanent approval or denial.
+        Records `revoked_at`. A revoked permanent denial keeps its original `denied_at`, its
+        `denial_reason`, and any delivery state; it is never delivered after revocation. A
+        revoked permanent grant reports the revocation time in `denied_at`, as before.
+        Auth: acting user principal from the browser auth layer; principal must match.
+      responses:
+        "200":
+          description: Permanent approval or denial revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DenyResponse"
+              example:
+                data:
+                  id: 990e8400-e29b-41d4-a716-446655440025
+                  status: denied
+                  denied_at: "2026-11-16T10:06:30Z"
+                  revoked_at: "2026-11-16T10:06:45Z"
+                  denial_reason: Wait for the release window.
+        # 401, 403, and 404 are unchanged.
 
 components:
   schemas:
@@ -189,49 +220,58 @@ components:
             id: { type: string, format: uuid }
             status: { type: string, enum: [denied] }
             persistence: { type: string, enum: [permanent], nullable: true }
-            denied_at: { type: string, format: date-time }
+            denied_at:
+              type: string
+              format: date-time
+              description: Time of the denial. For a revoked permanent grant, the revocation time.
             denial_reason:
               $ref: "#/components/schemas/DenialReason"
+            revoked_at:
+              type: string
+              format: date-time
+              description: Present only in revoke responses; time of the permanent revocation.
 
     ToolApprovalDetail:
-      # Existing schema; one property added.
+      # Existing schema; two properties added.
       properties:
         denial_reason:
           allOf:
             - $ref: "#/components/schemas/DenialReason"
           description: Present only on a denied approval whose owner supplied a reason.
-
-    ToolApprovalSummary:
-      # Existing sync schema; three properties added. The reason itself is never synchronized.
-      required: [expires_at, denial_delivery_pending]
-      properties:
-        expires_at:
+        revoked_at:
           type: string
           format: date-time
-          description: End of the pending-review window; also the end of the denied-outcome delivery window.
-        denial_delivered_at:
+          description: |
+            Present only on a permanent approval or denial revoked after this feature.
+            Historical revocations are not inferred.
+
+    ToolApprovalSummary:
+      # Existing sync schema; one property added. The reason itself is never synchronized.
+      properties:
+        denial_deliverable_until:
           type: string
           format: date-time
           nullable: true
-          description: Time the broker claimed the denied outcome for at-most-once delivery; absent if unclaimed, not an acknowledgement.
-        denial_delivery_pending:
-          type: boolean
-          description: True only for a new unclaimed user denial; false after claim or permanent revocation and for historical records. No reason content.
+          description: |
+            Denial Delivery deadline of a denied approval that is still unclaimed and unrevoked.
+            Absent for every other record (pending, approved, claimed, revoked, revoked grant,
+            historical). Derived from the broker's domain deliverability rule; the gateway only
+            compares it with the current time. No reason content.
 
-    DeliveryClaimRequest:
+    DenialDeliveryClaimRequest:
       type: object
       required: [tool_name, arguments]
       properties:
         tool_name: { type: string, minLength: 1 }
         arguments: { type: object, additionalProperties: true }
 
-    DeliveryClaimResponse:
+    DenialDeliveryClaimResponse:
       type: object
       required: [data]
       properties:
         data:
           type: object
-          required: [id, status, denied_at, delivered_at]
+          required: [id, status, denied_at, denial_delivered_at]
           properties:
             id: { type: string, format: uuid }
             status: { type: string, enum: [denied] }
@@ -239,4 +279,7 @@ components:
             denied_at: { type: string, format: date-time }
             denial_reason:
               $ref: "#/components/schemas/DenialReason"
-            delivered_at: { type: string, format: date-time }
+            denial_delivered_at:
+              type: string
+              format: date-time
+              description: Time the broker claimed this Denial Delivery; the same value the record stores.

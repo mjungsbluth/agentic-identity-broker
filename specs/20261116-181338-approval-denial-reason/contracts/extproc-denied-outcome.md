@@ -1,10 +1,13 @@
-# Contract: Denied outcome delivered to the requesting agent (ExtProc → MCP client)
+# Contract: Denied Outcome delivered to the requesting agent (ExtProc → MCP client)
 
 **Status**: Proposed (approval items **API-MCP** and **DEC-DELIVERY** in [plan.md](../plan.md#approval-items)).
 **Owner**: `internal/extproc/server` (rendering) and `internal/extproc/approval` (gate decision).
-**Related**: [enduser-approvals-openapi.yaml](./enduser-approvals-openapi.yaml) (`POST /api/approvals/deliveries`),
+**Related**: [enduser-approvals-openapi.yaml](./enduser-approvals-openapi.yaml) (`POST /api/approvals/denial-deliveries`),
 [research R4–R6](../research.md#r4--how-the-requesting-agent-receives-the-outcome), draft
 [ADR](../20261116-191554-tool-approval-denial-reason-delivery.md).
+
+The **Denied Outcome** is the agent-facing result of a **Denial Delivery** (glossary terms,
+[research R12](../research.md#r12--delivery-vocabulary)).
 
 ## When it applies
 
@@ -12,14 +15,15 @@ ExtProc returns this response for a standalone MCP `tools/call` when all of thes
 
 1. OPA returns `approval_required` and the approval gate is enabled (unchanged entry conditions;
    batches and header-only requests never enter the gate).
-2. The verified `(principal, agent_id)` pair's fresh snapshot contains a denied, never-approved,
-   undelivered, unrevoked (`denial_delivery_pending` true) approval for the invoked tool whose `expires_at`
-   is in the future. Historical records have no pending delivery.
+2. The verified `(principal, agent_id)` pair's fresh snapshot contains a denied approval for the
+   invoked tool whose `denial_deliverable_until` is later than now. The broker sets that field
+   only for unclaimed, unrevoked denials made after this feature, so historical records,
+   revoked grants, and revoked denials never qualify.
 3. Permanent denial retains first precedence; otherwise no valid matching approval authorizes
    this invocation. A matching approval proceeds without a delivery claim, leaving any temporary
    denial unclaimed until an eligible repeat or expiry. Concurrent changes retain the existing
    freshness-bounded snapshot semantics, not a globally serialized approval check.
-4. `POST /api/approvals/deliveries` with the invocation's tool name and arguments returns `200`.
+4. `POST /api/approvals/denial-deliveries` with the invocation's tool name and arguments returns `200`.
 
 In every other case the existing responses apply unchanged: proceed, URL elicitation (`-32042`),
 or HTTP 403 `access_denied` (including `tool permanently denied` for later invocations blocked by a
@@ -90,12 +94,13 @@ The tool is not executed and no new approval is created for this invocation.
 | Condition | Response |
 |---|---|
 | Delivery claim returns `204` | Continue: permanent denial → existing 403 `tool permanently denied`; otherwise existing create/elicit path. |
-| Delivery claim fails (network, timeout, any status other than `200` or `204`, malformed body) | Existing HTTP 403 `access_denied` with `error_description` `approval decision could not be delivered`; no approval created. |
+| Delivery claim fails (network, timeout, any status other than `200` or `204`, malformed body) | Existing HTTP 403 `access_denied` with `error_description` `approval denial could not be delivered`; no approval created. |
 | Lost response after a successful claim | Not redelivered (at-most-once, as for `once` approvals). The owner can still read the reason in the UI. |
+| Stale snapshot still shows a candidate after a concurrent grant | The claim can deliver the denial and block this call although a fresher snapshot would allow it. This fails closed within the existing freshness bound of ADR 036-extproc-approval-cache-and-gate. |
 | Permanent denial revoked before claim | Broker returns `204`; after sync confirms revocation the normal approval path resumes without the withdrawn outcome or reason. A stale snapshot may still block under existing freshness rules, but cannot claim the revoked decision. |
 | Claim/revocation race | Revocation committed first suppresses the claim. A claim committed first may already be in flight and is not recalled; no second delivery occurs. Owner reason remains unchanged. |
 
-Broker `500` claim/storage failures carry only `{"error":"internal_error","message":"failed to deliver approval decision"}`.
+Broker `500` claim/storage failures carry only `{"error":"internal_error","message":"failed to deliver approval denial"}`.
 The gateway treats them as delivery failure above, never forwards dependency details, and never
 resets delivery after an ambiguous committed response.
 
