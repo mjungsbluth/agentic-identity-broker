@@ -1161,6 +1161,21 @@ test("the status keeps the approval signed off when an implementation fails or b
   assert.ok(blocked.created[0].body.includes("› Approve ✅ › **Implement ⛔**"));
 });
 
+test("an implementation that ends without a result is not explained by an earlier run's blocker", async () => {
+  const reviewed = [comment(result("clarify", { run: "80/1" })), comment(result("reanalyze", { run: "80/1" }), { id: 13 }),
+    approvalComment()];
+  const earlier = comment(result("implement", { status: "blocked", next_step: "Old blocker", run: "90/1" }), { id: 60 });
+  const implementing = { route: { result: "success", outputs: { action: "implement", pr: "42" } } };
+  for (const outcome of ["success", "cancelled"]) {
+    const f = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments: [...reviewed, earlier] });
+    await report({ ...f, needs: { ...implementing, implement: { result: outcome, outputs: {} } } });
+    const { body } = f.created[0];
+    assert.ok(body.startsWith("## Spec Kit · ⛔ `implement` published no result\n"), body.slice(0, 80));
+    assert.ok(body.includes("so this run pushed nothing"));
+    assert.ok(!body.includes("Old blocker"));
+  }
+});
+
 test("a blocked implementation resumes under its approval although it changed the feature directory", async () => {
   const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
   const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 }), approvalComment()];
