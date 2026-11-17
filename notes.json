@@ -9,7 +9,7 @@
       "number": 4,
       "state": "commented",
       "updated_at": "2026-11-17",
-      "note": "Draft #8 published; docs CI passes. Dependency review fails before verdict because repository support/Dependency graph is unavailable; administrator action requested on PR. Keep issue open pending scan validation and merge."
+      "note": "Scan 44120615143 adds GHSA-fc5q-39xc-vjpf in picomatch 2.3.2/4.0.7 across docs and web lockfiles; advisory lists no patch. Submitted evidence on #4. Draft #8 addresses XML parser only; keep issue open."
     }
   ],
   "fixes": [
@@ -19,33 +19,15 @@
       "branch": "repo-assist/fix-issue-4-docs-xml-parser-ae28a5891f373502",
       "status": "open",
       "updated_at": "2026-11-17",
-      "note": "Live head 254006f confirmed. Docs build passes; dependency-review job 133674400418 fails on repository capability/settings, causing gate failure. Separate statuses empty; no code update warranted."
+      "note": "Draft #8 still open at 254006f; docs build passes, dependency review/settings and gate fail, separate statuses empty. New picomatch finding is outside this fix."
     }
   ],
   "checks": [
-    {
-      "area": "dependencies",
-      "checked_at": "2026-11-17",
-      "result": "XML-parser fix is live in draft #8. No Dependabot PRs to bundle. Dependency-review failure is repository capability/settings, not a vulnerability verdict.",
-      "follow_up": "Administrator checks Dependency graph; separately run whole-tree scanner against fixed lockfile."
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-17",
-      "result": "PR #8 Docs build passed at head 254006f; no documentation-build regression identified.",
-      "follow_up": null
-    },
     {
       "area": "build",
       "checked_at": "2026-11-16",
       "result": "Prior fix validation: just check/build/test passed; full verify stopped at OSV API TLS validation, later tiers not reached.",
       "follow_up": "Full verification remains outstanding; no TLS or scanner bypass."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-17",
-      "result": "One open draft #8. Read check runs on both pages, separate statuses, comments and review threads. No review requests or code-caused failures; posted one actionable infrastructure diagnosis.",
-      "follow_up": "Wait for administrator response or changed checks."
     },
     {
       "area": "ci",
@@ -66,18 +48,41 @@
       "follow_up": null
     },
     {
+      "area": "dependencies",
+      "checked_at": "2026-11-17",
+      "result": "New scheduled scan reports XML parser plus picomatch ReDoS in docs/web lockfiles; advisory updated today lists no patched picomatch version. Lockfile parents verified; no exploit run or exceptions added.",
+      "follow_up": "Assess untrusted-pattern reachability and monitor patched release; #8 alone cannot resolve #4."
+    },
+    {
+      "area": "docs",
+      "checked_at": "2026-11-17",
+      "result": "README and CONTRIBUTING reviewed; all 46 local Markdown path targets exist (anchors/external links not checked). security-scan.sh syntax passes; no worthwhile focused docs edit identified.",
+      "follow_up": null
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-17",
+      "result": "Draft #8 live at 254006f; no human activity or review threads. Docs build passes; dependency-review/settings and gate failures unchanged; commit statuses empty.",
+      "follow_up": "Await administrator action; avoid repeating PR comment."
+    },
+    {
       "area": "release",
       "checked_at": "2026-11-17",
-      "result": "Recent default-branch commits adjust agentic review workflows; only pending Repo Assist change is docs transitive dependency fix. No separate product-release preparation proposed.",
+      "result": "Recent commits concern Spec Kit workflow handling; no separate product-release preparation warranted.",
       "follow_up": null
     }
   ],
   "completed_actions": [],
   "priorities": [
     {
+      "task": 10,
+      "item": "issue-4-picomatch",
+      "note": "Track GHSA-fc5q-39xc-vjpf patch availability and assess untrusted glob reachability in docs/dev tooling. No patch listed at investigation; no scanner suppression proposed."
+    },
+    {
       "task": 6,
       "item": "pr-8-dependency-review-settings",
-      "note": "Await administrator enabling/verifying Dependency graph and rerunning CI. Re-engage only on changed checks or human activity; separately validate whole-tree OSV before resolving #4. Avoid duplicating active spec-driven #6 for #5."
+      "note": "Await administrator Dependency graph action or changed checks. Validate full scan against #8 and keep #4 open for added picomatch finding. Avoid duplicating active spec-driven #6 for #5."
     }
   ]
 }
