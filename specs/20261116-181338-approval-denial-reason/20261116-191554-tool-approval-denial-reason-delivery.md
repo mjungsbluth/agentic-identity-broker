@@ -20,7 +20,7 @@ out of band, and the agent's retry of the same `tools/call` carries no approval 
 
 Relevant accepted decisions: `018-approval-endpoint-auth-boundaries` (per-endpoint approval
 authentication), `036-extproc-approval-cache-and-gate` (broker authority, cache freshness, gate
-order, at-most-once `once` consumption), `014-long-poll-listen-notify` (sync),
+order, best-effort at-most-once `once` use within one ExtProc instance), `014-long-poll-listen-notify` (sync),
 `035-shared-tool-pattern-matching` (the only broker-domain import in ExtProc), and
 `045-agent-subject-impersonation` (agent-subject tokens rejected on subject-token approval
 endpoints, decision 6a).
@@ -39,7 +39,7 @@ it produces. Only denials are delivered.
 `ToolApproval` gains an optional immutable `DenialReason` value object, set only in the
 pending → denied transition and stored in `tool_approvals.denial_reason`. Empty or whitespace-only
 input means no reason, normalized before nonblank length validation (including 501 whitespace
-code points within the independent 16-KiB body bound); other input is kept exactly. The domain
+code points within the independent 16-KiB body bound); nonblank input is kept exactly if at most 500 code points and free of U+0000, otherwise rejected with constant `400 invalid_denial_reason` without changing the pending approval. PostgreSQL `TEXT` cannot store U+0000. The domain
 constructor `storage.NewDenialReason` is the only authority for these rules. The deny handler
 bounds the body, checks the JSON type, and passes the raw text to the domain; the OpenAPI pattern
 and the browser check are advisory, and store constraints (denied status, 1–500 characters) are a
@@ -87,8 +87,8 @@ derives principal and agent from the authenticated context; the request cannot n
 Agent-subject tokens are rejected as on the other subject-token approval endpoints; this extends
 the endpoint list of `045-agent-subject-impersonation` decision 6a with one endpoint.
 
-Denial Delivery is the approval system's second at-most-once claim, next to the `once`
-consumption of `036-extproc-approval-cache-and-gate`. They stay separate because the records and
+Denial Delivery enforces at-most-once claiming per denied decision at the broker across ExtProc instances, unlike the best-effort local `once`
+reservation within one instance in `036-extproc-approval-cache-and-gate`. Existing `once` behavior is unchanged. They stay separate because the records and
 risks differ: consumption is looked up by approval ID, returns nothing user-authored, needs only
 the subject token, and removes the record from sync; Denial Delivery is looked up by invocation
 key with a broker-computed hash, returns user-authored text, needs the gateway's client assertion,
@@ -162,8 +162,8 @@ only whether a reason was present.
 - A repeated invocation inside the window adds one broker call while an undelivered denial for that
   tool exists.
 - Reasons are stored as plaintext, like tool arguments.
-- The approval system now has two at-most-once claim mechanisms (`once` consumption and Denial
-  Delivery) with different lookups and authentication boundaries.
+- The approval system has two mechanisms with distinct concurrency guarantees: best-effort local `once` reservation within one ExtProc instance and broker-enforced cross-instance Denial
+  Delivery, with different lookups and authentication boundaries. Both can lose a response without automatic recovery; their guarantees are not equivalent.
 - A stale ExtProc snapshot can still show a delivery candidate after a concurrent grant; the
   claim then blocks a call that a fresher snapshot would have allowed. This fails closed within
   the existing freshness bound.
@@ -208,8 +208,8 @@ only whether a reason was present.
 
 - **`018-approval-endpoint-auth-boundaries`**: Extended with one gateway endpoint that uses the
   create boundary. No existing boundary changes.
-- **`036-extproc-approval-cache-and-gate`**: Extended with a Denial Delivery step and a second
-  at-most-once claim next to `once` consumption; freshness, identity, revocation, and `once`
+- **`036-extproc-approval-cache-and-gate`**: Extended with a broker-enforced cross-instance Denial Delivery step beside the best-effort
+  local `once` reservation within one ExtProc instance; freshness, identity, revocation, and `once`
   consumption rules are unchanged.
 - **`045-agent-subject-impersonation`**: Decision 6a's rejection of agent-subject tokens on
   subject-token approval endpoints is extended to `POST /api/approvals/denial-deliveries`.

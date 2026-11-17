@@ -146,8 +146,8 @@ existing `403 tool permanently denied` without a reason (accepted FR-010).
 - A fixed window measured from the denial bounds delivery without a new retention period or
   configuration key (FR-008, Assumptions, R13).
 
-**Consequences**: A lost response is not redelivered to the agent (same at-most-once guarantee as
-`once` approvals, ADR 036-extproc-approval-cache-and-gate). The owner can still reread the reason.
+**Consequences**: A lost response is not redelivered to the agent; the broker enforces at-most-once claiming per denied decision across ExtProc instances. Existing `once` reservations provide only best-effort at-most-once use within one instance under
+ADR 036-extproc-approval-cache-and-gate. Both paths can lose a response without automatic recovery, but their concurrency guarantees differ; this feature does not strengthen `once` consumption. The owner can still reread the reason.
 A temporary denial now gives the agent one Denied Outcome on its first eligible retry instead of
 a fresh prompt (**DEC-TEMP**); it never overrides a valid matching approval. A stale ExtProc
 snapshot can still show a denial candidate after a concurrent grant; the claim then denies a call
@@ -209,24 +209,24 @@ and persists with a compare-and-set `MarkDenialDelivered` that succeeds only whi
 mutable predicate inputs (`denial_delivered_at`, `revoked_at`) are still `NULL`. A lost
 compare-and-set (concurrent claim or revocation) moves to the next candidate or returns none.
 
-**A second at-most-once claim, next to `once` consumption** (architecture review F1): ADR
-036-extproc-approval-cache-and-gate already has one at-most-once mechanism: ExtProc reserves a
+**A broker-enforced claim beside best-effort local `once` consumption** (architecture review F1): ADR
+036-extproc-approval-cache-and-gate gives best-effort at-most-once use within one ExtProc instance: it reserves a
 cached `once` approval locally and then calls `POST /api/approvals/{id}/consume` with the subject
-token. Denial Delivery is a second, deliberately separate mechanism:
+token. Denial Delivery instead enforces at-most-once claiming per denied decision at the broker across instances:
 
-| Aspect | `once` consumption (ADR 036) | Denial Delivery (this feature) |
+| Aspect | `once` consumption (ADR 036-extproc-approval-cache-and-gate) | Denial Delivery (this feature) |
 |---|---|---|
 | Record | Approved, `persistence=once` | Newly denied, inside its delivery deadline |
 | Lookup | By approval ID from the snapshot | By invocation key; the broker computes the hash |
 | Returns | Nothing user-authored | User-authored reason |
 | Authentication | Subject token | Subject token + client assertion (create's boundary) |
 | Effect on sync | `consumed=true` removes the record | Record stays; `denial_deliverable_until` becomes absent |
-| Local reservation | ExtProc CAS before the call | None; the broker claim is the only authority |
+| Concurrency guarantee | ExtProc CAS before the call; best-effort at-most-once use within one instance | Broker compare-and-set; at-most-once claiming per denied decision across instances |
 
 Each difference follows from the record kind: consumption authorizes execution of an approval
 already in the snapshot, while Denial Delivery hands user-authored text to the gateway that
 minted the prompt and must keep permanent-denial enforcement in sync. The ADR draft records both
-mechanisms as the approval system's two at-most-once claims.
+mechanisms with their distinct scopes: best-effort local `once` reservation versus broker-enforced Denial Delivery. Existing `once` concurrency behavior is unchanged.
 
 **Rationale**: The endpoint returns user-authored text to the gateway that minted the prompt, so it
 takes the strongest existing boundary: proof of both the user/agent context and the trusted

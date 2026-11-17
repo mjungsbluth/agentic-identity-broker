@@ -23,8 +23,8 @@ paths:
         A claimed denial is never claimed again. Revocation suppresses unclaimed delivery
         without changing the owner's reason; a claim committed before revocation may already
         be in flight.
-        This is the approval system's second at-most-once claim, separate from
-        `POST /api/approvals/{id}/consume` for `once` approvals.
+        This broker claim enforces at-most-once delivery per denied decision across ExtProc instances, unlike the best-effort local reservation within one instance for
+        `POST /api/approvals/{id}/consume` under ADR 036-extproc-approval-cache-and-gate; existing `once` consumption is unchanged.
         ExtProc preserves gate precedence: a permanent denial blocks first; otherwise a valid
         matching approval proceeds without a claim. This endpoint checks record eligibility,
         not the gateway's freshness-bounded approval snapshot.
