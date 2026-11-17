@@ -1147,6 +1147,20 @@ test("implementation requires a maintainer 👍 on the approval comment for the 
   await assert.rejects(prepare({ ...unapproved, inputs: { phase: "implement", pr: 42 } }), /Approval pending/);
 });
 
+test("the status keeps the approval signed off when an implementation fails or blocks", async () => {
+  const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 }), approvalComment()];
+  const implementing = { route: { result: "success", outputs: { action: "implement", pr: "42" } } };
+  const crashed = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments: reviewed });
+  await report({ ...crashed, needs: { ...implementing, implement: { result: "failure", outputs: {} } } });
+  assert.ok(crashed.created[0].body.startsWith("## Spec Kit · ⛔ `implement` failed\n"));
+  assert.ok(crashed.created[0].body.includes("› Reanalyze ✅ › **Approve ✅** › Implement ○"));
+
+  const partial = comment(result("implement", { status: "blocked", next_step: "Install ginkgo" }), { id: 60 });
+  const blocked = fixture("issue_comment", commandEvent(command("/speckit-implement")), { comments: [...reviewed, partial] });
+  await report({ ...blocked, needs: { ...implementing, implement: { result: "success", outputs: {} } } });
+  assert.ok(blocked.created[0].body.includes("› Approve ✅ › **Implement ⛔**"));
+});
+
 test("a blocked implementation resumes under its approval although it changed the feature directory", async () => {
   const payload = { action: "labeled", label: { name: "speckit:implement" }, pull_request: { number: 42 } };
   const reviewed = [comment(result("clarify")), comment(result("reanalyze"), { id: 13 }), approvalComment()];
