@@ -1925,7 +1925,22 @@ test("remediation waits for a completed code phase; earlier reviews publish no p
   assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
 });
 
-test("planning ends with an architecture review of the plan that /speckit-plan addresses", async () => {
+test("remediation applies the plan review of the same run alongside the analysis", async (t) => {
+  preparationIO(t);
+  const items = [item("F1"), item("F2", { bucket: "question", question: "Which store owns it?" })];
+  const analyzed = comment(result("analyze"), { id: 16 });
+  const prepared = (review) => prepare({
+    ...fixture("pull_request_target", {}, { comments: [analyzed, ...(review ? [review] : [])] }),
+    inputs: { phase: "remediate", pr: 42 },
+  });
+  assert.deepEqual((await prepared(architectureReview(items, { id: 22 }))).review,
+    { url: link(22), recommendation: "DISCUSS", items });
+  assert.equal((await prepared(architectureReview(items, { id: 22, run: "99/1" }))).review, undefined);
+  assert.equal((await prepared(architectureReview(items, { id: 22, head: "b".repeat(40) }))).review, undefined);
+  assert.equal((await prepared()).review, undefined);
+});
+
+test("planning applies the plan review's findings; a standalone plan review leaves them to /speckit-plan", async () => {
   const comments = [
     posted(result("clarify"), 10), posted(result("reanalyze", { approvals: [] }), 18),
     approvalComment({ reanalysis: 18, items: 0 }, { id: 19 }),
@@ -1933,19 +1948,31 @@ test("planning ends with an architecture review of the plan that /speckit-plan a
   ];
   const needs = (planreview, proposals) => ({
     route: { result: "success", outputs: { action: "plan", pr: "42" } },
+    remediate: { result: "success", outputs: {} },
     reanalyze: { result: "success", outputs: {} }, approvals: { result: "success", outputs: {} },
     planreview, ...(proposals ? { proposals } : {}),
   });
+  const discuss = { result: "success", outputs: { comment_id: "", recommendation: "DISCUSS", questions: "1", remediable: "false" } };
   const f = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
-  await report({ ...f, needs: needs({ result: "success", outputs: { comment_id: "22" } },
-    { result: "success", outputs: { comment_id: "", recommendation: "DISCUSS", questions: "1", remediable: "false" } }) });
+  await report({ ...f, needs: needs({ result: "success", outputs: { comment_id: "22" } }, discuss) });
   const { body } = f.created[0];
   assert.ok(body.startsWith("## Spec Kit · ✅ Ready to implement\n"));
   assert.ok(body.includes("› **Approve ✅** › Implement ○ › Review ○ › Fix ○"));
-  assert.ok(body.includes(`Architecture review of the plan: **DISCUSS**. [Read the review](${link(22)}).`));
-  assert.ok(body.includes("Address its findings with `/speckit-plan <guidance>` before you approve; planning then ends with a new review."));
-  assert.ok(body.includes("Answer its open questions with `/speckit-plan <decision>`."));
+  assert.ok(body.includes(`Architecture review of the plan: **DISCUSS**. [Read the review](${link(22)}).\n\n` +
+    "Remediation applied its findings to the plan; any consequential choice among them is on the approval comment."));
+  assert.ok(!body.includes("Apply its findings with"));
+  assert.ok(!body.includes("Answer its open questions"));
   assert.ok(!body.includes("remediated after `/speckit-implement`"));
+
+  const standalone = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments });
+  await report({ ...standalone, needs: {
+    route: { result: "success", outputs: { action: "planreview", pr: "42" } },
+    planreview: { result: "success", outputs: { comment_id: "22" } }, proposals: discuss,
+  } });
+  assert.ok(standalone.created[0].body.includes(
+    "Apply its findings with `/speckit-plan [guidance]` before you approve; " +
+    "replanning reviews the plan again and remediates the findings."));
+  assert.ok(standalone.created[0].body.includes("Answer its open questions with `/speckit-plan <decision>`."));
 
   const approved = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
   await report({ ...approved, needs: needs({ result: "success", outputs: { comment_id: "22" } },
@@ -1957,7 +1984,8 @@ test("planning ends with an architecture review of the plan that /speckit-plan a
   await report({ ...crashed, needs: needs({ result: "failure", outputs: {} }) });
   assert.ok(crashed.created[0].body.startsWith("## Spec Kit · ✅ Ready to implement\n"));
   assert.ok(crashed.created[0].body.includes("Nothing needs sign-off. Comment `/speckit-implement` to start implementation.\n\n" +
-    "Architecture review of the plan did not complete. Comment `/architecture-review` to run it again."));
+    "Architecture review of the plan did not complete, so remediation applied only the analysis findings. " +
+    "Comment `/architecture-review` to run it again."));
 
   const rerun = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments });
   await report({ ...rerun, needs: {
@@ -1979,9 +2007,9 @@ const maintainerCommands = [
   "Each command must start a new PR comment.", "",
   "- After the automatic clarification, review the specification and the clarification comment's recommended answers. " +
     "React with 👍 to accept them, or comment `/speckit-clarify <answer>` to choose another one. " +
-    "Then comment `/speckit-plan [guidance]`. The pipeline plans, writes tasks, analyzes, and remediates on its own, " +
-    "posts one approval comment listing the API changes, ADRs, and consequential decisions with links to them, " +
-    "and ends planning with an architecture review of the planning artifacts.",
+    "Then comment `/speckit-plan [guidance]`. The pipeline plans, writes tasks, reviews the plan's architecture, " +
+    "analyzes, and remediates the review and analysis findings on its own, then posts one approval comment " +
+    "listing the API changes, ADRs, and consequential decisions with links to them.",
   "- React with 👍 to the approval comment to approve it, then comment `/speckit-implement [guidance]`. " +
     "If the container tests then fail on the implementation's commit, a repair run starts automatically, " +
     "up to 3 times per command.",

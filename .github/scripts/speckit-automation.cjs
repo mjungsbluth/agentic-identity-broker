@@ -22,9 +22,8 @@ const applyBox = "**Apply the selected items**";
 const statusMarker = "<!-- speckit-status -->";
 const commitNotice = /^Commit pushed: \[`([0-9a-f]{7,40})`\]\((https:\/\/github\.com\/\S+?\/commit\/[0-9a-f]{40})\)/;
 const blocking = ["CRITICAL", "HIGH"];
-const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "analyze", "remediate", "reanalyze",
-  "implement", "verify", "approvals", "planreview", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals",
-  "tests"];
+const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "planreview", "analyze", "remediate", "reanalyze",
+  "implement", "verify", "approvals", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals", "tests"];
 const reviewJobs = ["planreview", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
 // The pipeline owns this block of the PR description. The markers keep their first name for existing PRs.
 const sectionMarkers = ["<!-- speckit-stage -->", "<!-- /speckit-stage -->"];
@@ -609,6 +608,10 @@ async function prepare({ github, context, inputs }) {
       if (reviewPhases.includes(inputs.phase)) {
         data.review = await reviewContext(github, context, pr, inputs);
       }
+      if (inputs.phase === "remediate") {
+        const review = await planReviewContext(github, context, pr);
+        if (review) data.review = review;
+      }
       if (repairing) {
         const comments = await github.paginate(github.rest.issues.listComments,
           { ...context.repo, issue_number: pr.number, per_page: 100 });
@@ -1004,6 +1007,15 @@ async function reviewContext(github, context, pr, inputs) {
   return { url: entry.comment.html_url, items };
 }
 
+// Planning reviews the plan beside the analysis, so remediation applies both. A review from another run or
+// commit, or a failed review, leaves remediation to the analysis findings.
+async function planReviewContext(github, context, pr) {
+  const comments = await github.paginate(github.rest.issues.listComments, { ...context.repo, issue_number: pr.number, per_page: 100 });
+  const entry = latestReview(comments, pr.head.sha);
+  if (!entry || entry.review.run.split("/")[0] !== String(context.runId)) return undefined;
+  return { url: entry.comment.html_url, recommendation: entry.review.recommendation, items: entry.review.items };
+}
+
 // Remediation changes code, so it needs a completed implementation, remediation, or apply phase on the PR.
 async function remediable({ github, context, pr }) {
   retryReads(github);
@@ -1124,7 +1136,7 @@ function agentComments(comments, repo, run) {
 }
 
 // The architecture review and its remediation run in the same pipeline; their comments are the workers' own.
-// Planning ends with its own review, whose findings change the plan rather than the code.
+// Planning includes its own review, whose findings remediation applies to the plan rather than the code.
 function reviewLines(needs, repo, number) {
   const [name, final] = ["rereview", "review", "planreview"].map((job) => [job, needs[job]])
     .find(([, job]) => job && job.result !== "skipped") || [];
@@ -1133,15 +1145,25 @@ function reviewLines(needs, repo, number) {
   const url = (id) => `https://github.com/${repo.owner}/${repo.repo}/pull/${number}#issuecomment-${id}`;
   const id = Number(final.outputs?.comment_id);
   if (final.result !== "success" || !id) {
-    return ["", `${subject} did not complete. Comment \`/architecture-review\` to run it again.`];
+    const planning = name === "planreview" && needs.remediate?.result === "success";
+    return ["", `${subject} did not complete${planning ? ", so remediation applied only the analysis findings" : ""}. ` +
+      "Comment `/architecture-review` to run it again."];
   }
   const proposals = needs.proposals?.result === "success" ? needs.proposals.outputs || {} : {};
   const recommendation = Object.hasOwn(reviewRecommendations, proposals.recommendation) ? proposals.recommendation : null;
   const lines = ["", `${subject}${recommendation ? `: **${recommendation}**` : ""}. [Read the review](${url(id)}).`];
   const proposal = Number(proposals.comment_id);
+  // In a planning run, remediation already applied the plan review's findings; a standalone review only advises.
+  const applied = name === "planreview" && needs.remediate?.result === "success";
+  if (applied) {
+    lines.push("", recommendation === "APPROVE" ? "Nothing is left to remediate." :
+      "Remediation applied its findings to the plan; any consequential choice among them is on the approval comment.");
+    return lines;
+  }
   if (name === "planreview") {
     if (recommendation !== "APPROVE") {
-      lines.push("", "Address its findings with `/speckit-plan <guidance>` before you approve; planning then ends with a new review.");
+      lines.push("", "Apply its findings with `/speckit-plan [guidance]` before you approve; " +
+        "replanning reviews the plan again and remediates the findings.");
     }
   } else if (proposals.remediable === "false") {
     lines.push("", "Its findings are remediated after `/speckit-implement`, when the review runs again.");
@@ -1241,9 +1263,9 @@ function maintainerCommands() {
     "Each command must start a new PR comment.", "",
     "- After the automatic clarification, review the specification and the clarification comment's recommended answers. " +
       "React with 👍 to accept them, or comment `/speckit-clarify <answer>` to choose another one. " +
-      "Then comment `/speckit-plan [guidance]`. The pipeline plans, writes tasks, analyzes, and remediates on its own, " +
-      "posts one approval comment listing the API changes, ADRs, and consequential decisions with links to them, " +
-      "and ends planning with an architecture review of the planning artifacts.",
+      "Then comment `/speckit-plan [guidance]`. The pipeline plans, writes tasks, reviews the plan's architecture, " +
+      "analyzes, and remediates the review and analysis findings on its own, then posts one approval comment " +
+      "listing the API changes, ADRs, and consequential decisions with links to them.",
     "- React with 👍 to the approval comment to approve it, then comment `/speckit-implement [guidance]`. " +
       "If the container tests then fail on the implementation's commit, a repair run starts automatically, " +
       `up to ${maxRepairs} times per command.`,
