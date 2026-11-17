@@ -28,6 +28,8 @@ model: copilot/luna
 models:
   luna: ["gpt-6-luna", "gpt-5.6-luna"]
 timeout-minutes: 180
+# Sub-agents share this model-call budget; the gateway's default of 500 covers only part of a feature.
+max-turns: 2000
 network:
   allowed:
     - local
