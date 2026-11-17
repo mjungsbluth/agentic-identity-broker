@@ -1384,7 +1384,9 @@ async function report({ github, context, needs }) {
   const reanalysis = stages.reanalyze && !stages.implement ? stages.reanalyze : null;
   const findings = reanalysis ? reanalysis.result.findings.filter((finding) => blocking.includes(finding.severity)) : [];
   const details = (entry) => `Details: [${entry.result.phase} report](${entry.comment.html_url})`;
-  let title, lines, approve;
+  let title, lines;
+  // Implementation starts only after the approval gate passes.
+  let approve = route.outputs?.action === "implement" || stages.implement ? "✅" : undefined;
   if (error) {
     title = `⛔ Stopped in \`${error[0]}\``;
     lines = [quoted(error[1].outputs.error)];
