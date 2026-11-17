@@ -182,8 +182,17 @@ red-green-refactor and the complete feature journeys. Work as the coordinator:
   the work yourself. Sub-agents never commit, push, or request safe outputs.
 - Your context window holds about one million tokens. Do not stop because you
   estimate that little context remains; hand the work to a sub-agent instead.
-  Stop only when every task is complete or the remaining tasks are blocked as
-  described below.
+  Stop only when every task is complete, the remaining tasks are blocked as
+  described below, or the session's time runs short.
+- The session ends after `$GH_AW_TIMEOUT_MINUTES` minutes, or 180 minutes when
+  that variable is unset, and its pushes and result happen only when you
+  request them. Work that is not requested by then is lost. Note `date -u`
+  when you start and check it before each hand-off. Once 70 percent of that
+  time has passed, start no further task: commit, request the push, and
+  publish the result. When tasks remain, report `blocked`, list the remaining
+  task IDs in the report, and state in `next_step` that the session reached
+  its time limit before the first remaining task. A later
+  `/speckit-implement` continues from the pushed commit.
 
 If
 `context.command.argument` is not empty, pass it to `/speckit-implement` as
