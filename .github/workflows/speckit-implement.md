@@ -23,10 +23,6 @@ on:
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
-model: copilot/luna
-# Resolved against the live Copilot catalog at run time; the first model it offers wins.
-models:
-  luna: ["gpt-6-luna", "gpt-5.6-luna"]
 timeout-minutes: 180
 # Sub-agents share this model-call budget; the gateway's default of 500 covers only part of a feature.
 max-turns: 2000
@@ -63,8 +59,6 @@ safe-outputs:
     - "!report_incomplete"
   threat-detection:
     continue-on-error: false
-    # Keep detection on its small default model; the agent's model alias does not reach it.
-    model: ${{ vars.GH_AW_MODEL_DETECTION_COPILOT || vars.GH_AW_DEFAULT_MODEL_COPILOT || 'detection' }}
   push-to-pull-request-branch:
     github-token-for-extra-empty-commit: none
     # Reading branch protection needs Administration, which the App does not hold; Spec Kit branches are unprotected.
