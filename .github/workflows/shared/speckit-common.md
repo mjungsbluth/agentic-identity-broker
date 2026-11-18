@@ -31,6 +31,13 @@ runtimes:
 jobs:
   agent:
     timeout-minutes: 200
+# gh-aw restores the skills into the workspace's ignored .pi/ directory, which the agent's checkout of the PR head
+# could replace; the agent reads this copy instead.
+pre-agent-steps:
+  - name: Preserve the installed skills
+    run: |
+      rm -rf /tmp/gh-aw/speckit/skills
+      cp -R .pi/skills /tmp/gh-aw/speckit/skills
 steps:
   - name: Preserve trusted automation code
     run: |
@@ -123,9 +130,9 @@ workflow or its permissions.
 Use the compiler-installed Spec Kit skills. `/speckit-specify` and similar
 names refer to those skills. This session has no skill tool, and Pi expands
 `/skill:speckit-specify` only when a person types it. To run a skill, read its
-`.pi/skills/<name>/SKILL.md` file, for example
-`.pi/skills/speckit-implement/SKILL.md`, and follow it. Never report a phase
-blocked because no skill tool exists. Follow the installed skill's full
+`/tmp/gh-aw/speckit/skills/<name>/SKILL.md` file, for example
+`/tmp/gh-aw/speckit/skills/speckit-implement/SKILL.md`, and follow it. Never
+report a phase blocked because no skill tool exists. Follow the installed skill's full
 procedure, not a summary or an independently recreated procedure, except
 where these instructions narrow it. Run only this session's phase. Do not
 delegate another pipeline phase or reuse a previous conversation.

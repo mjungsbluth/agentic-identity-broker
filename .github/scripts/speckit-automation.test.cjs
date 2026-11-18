@@ -130,7 +130,7 @@ function reviewComment(id, body, overrides = {}) {
 function fixture(eventName, payload, options = {}) {
   const calls = [];
   const pr = {
-    number: 42, state: "open", draft: true,
+    number: 42, state: "open", draft: true, title: "[spec-driven] Explain denials",
     user: { login: "github-actions[bot]", type: "Bot" },
     body: "<!-- speckit-issue: 7 -->",
     head: { ref: "speckit/issue-7", sha: "a".repeat(40), repo: { full_name: "example/broker" } },
@@ -331,6 +331,27 @@ test("relabeling regenerates a closed Spec Kit PR only after its branch is delet
 
   const denied = fixture("issues", payload, { existing: [previous], branchError: 403 });
   await assert.rejects(route(denied), (error) => error.status === 403);
+});
+
+test("phases refuse pull requests that would lose their pushes or replace the installed skills", async (t) => {
+  preparationIO(t);
+  const legacy = { pr: { title: "[Spec Kit] Explain denials" }, comments: [comment(result("clarify"))] };
+  const announced = fixture("issue_comment", commandEvent(command("/speckit-plan")), legacy);
+  await announce({ ...announced, needs: { route: { result: "success", outputs: { action: "plan", pr: "42" } } } });
+  assert.deepEqual(announced.updated[0], { owner: "example", repo: "broker", pull_number: 42, title: "[spec-driven] Explain denials" });
+
+  await assert.rejects(prepare({ ...fixture("pull_request_target", {}, legacy), inputs: { phase: "plan", pr: 42 } }),
+    /Rename the pull request title to start with `\[spec-driven\]`, then repeat the command/);
+  assert.equal((await prepare({ ...fixture("pull_request_target", {}, { comments: legacy.comments }), inputs: { phase: "plan", pr: 42 } }))
+    .previous.phase, "clarify");
+
+  await assert.rejects(prepare({ ...fixture("pull_request_target", {}, {
+    comments: legacy.comments, extra: { ".pi": "tracked" },
+  }), inputs: { phase: "plan", pr: 42 } }), /tracks files under `\.pi\/`, which would replace the installed skills and sub-agents/);
+
+  const current = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments: legacy.comments });
+  await announce({ ...current, needs: { route: { result: "success", outputs: { action: "plan", pr: "42" } } } });
+  assert.ok(current.updated.every((args) => args.title === undefined));
 });
 
 test("only Specify-created PRs are managed, whatever their body claims", async (t) => {
@@ -1331,6 +1352,11 @@ test("clarify results list each self-answered question with its recommended answ
   const none = clarify({ clarifications: [] });
   none.run();
   assert.deepEqual(none.published("phase").clarifications, []);
+  const blocked = clarify({ status: "blocked", next_step: "1. Decide X at specs/042-example/spec.md:5", clarifications: [question()] });
+  blocked.run();
+  assert.equal(blocked.published("phase").status, "blocked");
+  assert.deepEqual(blocked.published("phase").clarifications, [question()]);
+  assert.ok(parseResult(comment(result("clarify", { status: "blocked", next_step: "1. Decide X", clarifications: [question()] }))));
   const planned = resultCommand({ phase: "plan" }, { status: "complete", report: "Planned", clarifications: [question()] }, extra);
   planned.run();
   assert.equal(planned.published("plan").clarifications, undefined);
@@ -1385,6 +1411,13 @@ test("the clarification comment tables each recommended answer with linked alter
   assert.deepEqual(quiet.deleted, [30]);
   assert.equal(quiet.created.length, 0);
 
+  const pending = fixture("issue_comment", commandEvent(command("/speckit-clarify")), {
+    comments: [posted(result("clarify", { clarifications: [] }), 21), stale],
+    extra: { [`${spec}/spec.md`]: "# Spec\n\n## Clarifications\n\n- Q: Who? → A: The denying user (Proposed)\n" },
+  });
+  assert.equal(await publishClarifications({ ...pending, comment: "21" }), null);
+  assert.deepEqual(pending.deleted, []);
+
   for (const [item, error] of [
     [question({ location: "ARCHITECTURE.md:1" }), /must point into specs\/042-example\//],
     [question({ alternatives: [{ option: "Later", location: `${spec}/spec.md:12` }] }), /past the end/],
@@ -1420,6 +1453,24 @@ test("/speckit-plan requires a maintainer 👍 on the clarification comment of t
     { comments: [clarified, clarificationComment()] });
   await assert.rejects(route(label), /Clarification pending/);
   assert.equal((await routed([comment(result("clarify", { clarifications: [] }), { id: 21 })])).action, "plan");
+});
+
+test("planning stays gated while the specification proposes answers that a later clarification dropped", async () => {
+  const proposedSpec = "# Spec\n\n## Clarifications\n\n### Session 2026-11-18\n\n" +
+    "- Q: Who may read the reason? → A: The denying user (Proposed)\n- Alternative: any approver\n\n" +
+    "## Requirements\n\n- FR-001 mentions a (Proposed) ADR outside the clarifications\n";
+  const plan = commandEvent(command("/speckit-plan"));
+  const routed = (content, clarifications) => {
+    const extra = { [`${spec}/spec.md`]: content };
+    const rerun = comment(result("clarify", { clarifications, files: artifactHashes({ ...files, ...extra }) }), { id: 25 });
+    return route(fixture("issue_comment", plan, {
+      comments: [rerun, clarificationComment()], extra, reactions: [thumbs("+1", { comment_id: 22 })],
+    }));
+  };
+  await assert.rejects(routed(proposedSpec, []), new RegExp(`${spec}/spec\\.md still marks 1 answer\\(s\\) Proposed at line\\(s\\) 7, ` +
+    "but the latest clarification lists 0\\. Comment `/speckit-clarify` to publish them again"));
+  const accepted = proposedSpec.replace("The denying user (Proposed)", "The denying user (Accepted by maintainer on 2026-11-18: url)");
+  assert.equal((await routed(accepted, [])).action, "plan");
 });
 
 test("the status points to the clarification comment until its answers are accepted", async () => {
@@ -2203,7 +2254,7 @@ test("passing container tests on the last code phase's commit after the architec
     pushed(63, head), posted(result("remediate-review"), 64)];
   for (const comments of [reviewed, fixed]) {
     assert.deepEqual(await route(repairFixture({ ...passed, comments })),
-      { action: "ready", issue: 7, pr: 42, comment: 0, tests: 500 });
+      { action: "ready", issue: 7, pr: 42, comment: 0, tests: 500, head });
   }
   for (const options of [
     { comments: implemented(60) },
@@ -2219,7 +2270,7 @@ test("passing container tests on the last code phase's commit after the architec
 test("the report marks the pull request ready for review and says when it cannot", async () => {
   const comments = [posted(result("clarify"), 10), posted(result("reanalyze"), 13), approvalComment(),
     ...implemented(60), architectureReview([], { id: 62 })];
-  const needs = { route: { result: "success", outputs: { action: "ready", pr: "42", tests: "500" } } };
+  const needs = { route: { result: "success", outputs: { action: "ready", pr: "42", tests: "500", head } } };
   const ready = fixture("workflow_run", testEvent, { comments, pr: { node_id: "PR_42" } });
   await report({ ...ready, needs });
   assert.deepEqual(ready.readied, ["PR_42"]);
@@ -2235,6 +2286,15 @@ test("the report marks the pull request ready for review and says when it cannot
   assert.deepEqual(refused.readied, []);
   assert.ok(refused.created[0].body.startsWith("## Spec Kit · ⛔ Could not mark the pull request ready for review\n"));
   assert.ok(refused.created[0].body.includes("Mark the pull request ready for review yourself."));
+
+  const moved = fixture("workflow_run", testEvent, {
+    comments, pr: { node_id: "PR_42", head: { ref: "speckit/issue-7", sha: "b".repeat(40), repo: { full_name: "example/broker" } } },
+  });
+  await report({ ...moved, needs });
+  assert.deepEqual(moved.readied, []);
+  assert.ok(moved.created[0].body.startsWith("## Spec Kit · ⏸ New commit since the tested one\n"));
+  assert.ok(moved.created[0].body.includes("passed on `aaaaaaa`, but the pull request now ends at `bbbbbbb`. " +
+    "It stays a draft until the container tests pass on the new commit."));
 });
 
 test("repairs are bounded per maintainer implementation and a new one allows more", async () => {

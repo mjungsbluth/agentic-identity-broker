@@ -60,6 +60,7 @@ jobs:
       validation: ${{ steps.route.outputs.validation }}
       round: ${{ steps.route.outputs.round }}
       tests: ${{ steps.route.outputs.tests }}
+      head: ${{ steps.route.outputs.head }}
       error: ${{ steps.route.outputs.error }}
     steps:
       - name: Checkout trusted automation only

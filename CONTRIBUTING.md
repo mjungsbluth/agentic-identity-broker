@@ -178,7 +178,9 @@ Spec Kit pull requests carry the `[spec-driven]` title prefix and describe the f
 deliver. The pipeline rewrites its own block of the description on every run: a **Feature
 stage** line (Specified › Planned › Implemented › Reviewed) and the **Maintainer commands**
 of the current pipeline. It also removes the command list that older pull requests carry
-from the specify agent.
+from the specify agent. The phases push only to pull requests with that prefix, so the pipeline
+renames a pull request that still carries the earlier `[Spec Kit]` prefix when its next phase
+starts.
 
 After `/speckit-implement`, the container tests run on the last commit that the pipeline
 pushes. A failure starts a repair run, up to three per command. When the tests pass on that

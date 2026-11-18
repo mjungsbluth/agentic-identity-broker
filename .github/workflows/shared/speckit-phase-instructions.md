@@ -66,8 +66,11 @@ requirements, journeys, and examples. Do not manufacture ambiguity.
 
 Record each answer you chose under Clarifications as one entry: the question,
 the answer marked `(Proposed)`, its rationale, and each main alternative on a
-line of its own. List the same questions in `clarifications`, at most five,
-in the order of their entries. The workflow publishes them as the
+line of its own. List in `clarifications` every answer that Clarifications
+still marks `(Proposed)`, including answers that an earlier clarify run
+recorded, in the order of their entries. Keep at most five answers marked
+`(Proposed)`; planning refuses to start while the specification proposes more
+answers than `clarifications` lists. The workflow publishes them as the
 clarification comment, a table of each question, its recommended answer, and
 links to its alternatives. A maintainer's 👍 on that comment accepts all the
 answers, and planning then records the acceptance. These answers need no

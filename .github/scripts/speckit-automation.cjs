@@ -45,6 +45,9 @@ const reviewBuckets = ["auto", "proposed", "question", "note"];
 const maxReviewItems = 7;
 const maxRepairs = 3;
 const testsWorkflow = ".github/workflows/container-tests.yml";
+// The phase workflows push only to pull requests whose title starts with titlePrefix.
+const titlePrefix = "[spec-driven] ";
+const legacyTitlePrefix = "[Spec Kit] ";
 const readRetryDelays = [1000, 4000, 9000];
 const retryingReads = Symbol.for("agentic-identity-broker.retryReads");
 
@@ -128,7 +131,7 @@ function validateResult(result) {
   if (result.clarifications !== undefined) {
     if (result.phase !== "clarify" || !Array.isArray(result.clarifications) ||
         result.clarifications.length > maxClarifications ||
-        (result.status !== "complete" && result.clarifications.length)) {
+        (!["complete", "blocked"].includes(result.status) && result.clarifications.length)) {
       throw new Error("Invalid clarifications");
     }
     for (const item of result.clarifications) {
@@ -306,6 +309,16 @@ function managedPR(pr, repo, state = "open") {
     pr.head.ref === `speckit/issue-${issue[1]}` ? Number(issue[1]) : 0;
 }
 
+async function tracked(github, repo, ref, name) {
+  try {
+    await github.rest.repos.getContent({ ...repo, ref, path: name });
+    return true;
+  } catch (error) {
+    if (error.status === 404) return false;
+    throw error;
+  }
+}
+
 async function readBlob(github, repo, ref, name, optional = false) {
   let data;
   try {
@@ -481,8 +494,8 @@ async function routeRepair(github, repo, payload) {
   if (!repair) return { action: "noop" };
   // Passing tests on the commit of the last code phase hand the reviewed implementation to human review.
   if (tests.conclusion === "success") {
-    return reviewedImplementation(entries, comments) ? { action: "ready", issue, pr: number, comment: 0, tests: run.id } :
-      { action: "noop" };
+    return reviewedImplementation(entries, comments) ?
+      { action: "ready", issue, pr: number, comment: 0, tests: run.id, head: pr.head.sha } : { action: "noop" };
   }
   const routed = { issue, pr: number, comment: 0, validation: run.id, round: repair.round };
   if (repair.round > maxRepairs) return { action: "exhausted", ...routed };
@@ -603,6 +616,14 @@ async function prepare({ github, context, inputs }) {
     if (!phases.includes(inputs.phase)) throw new Error("Unsupported Spec Kit phase");
     const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(inputs.pr) });
     if (!managedPR(pr, context.repo)) throw new Error("Only managed, same-repository draft PRs are eligible");
+    if (!pr.title?.startsWith(titlePrefix)) {
+      throw new Error(`Rename the pull request title to start with \`${titlePrefix.trim()}\`, then repeat the command`);
+    }
+    // The agent checks out the head, and git replaces ignored files there with tracked ones.
+    if (await tracked(github, context.repo, pr.head.sha, ".pi")) {
+      throw new Error("The pull request tracks files under `.pi/`, which would replace the installed skills and " +
+        "sub-agents. Remove them from the branch, then repeat the command");
+    }
     const current = await artifacts(github, context.repo, pr);
     const entries = await reports(github, context.repo, pr.number);
     const previous = {
@@ -841,10 +862,15 @@ async function publishClarifications({ github, context, comment }) {
     for (const entry of item.alternatives) alternatives.push(await link(entry.option, entry.location));
     rows.push(`| Q${index + 1} ${cell(item.question)} | ${await link(item.answer, item.location)} | ${alternatives.join(" · ")} |`);
   }
-  for (const stale of await botComments(github, repo, pr.number, (body) => clarificationMarker.test(body))) {
-    await github.rest.issues.deleteComment({ ...repo, comment_id: stale.id });
+  const stale = await botComments(github, repo, pr.number, (body) => clarificationMarker.test(body));
+  const removeStale = async () => {
+    for (const entry of stale) await github.rest.issues.deleteComment({ ...repo, comment_id: entry.id });
+  };
+  // Without a replacement, the old comment stays while the specification still holds answers awaiting a 👍.
+  if (!items.length) {
+    if (!(await proposedAnswers(github, repo, pr.head.sha, current.feature)).length) await removeStale();
+    return null;
   }
-  if (!items.length) return null;
   const state = { clarify: posted.id, head: pr.head.sha, items: items.length };
   const answers = items.length === 1 ? "the 1 recommended answer" : `the ${items.length} recommended answers`;
   const body = [
@@ -858,12 +884,32 @@ async function publishClarifications({ github, context, comment }) {
     "", `<!-- speckit-clarification: ${JSON.stringify(state)} -->`, "",
   ];
   const { data } = await github.rest.issues.createComment({ ...repo, issue_number: pr.number, body: body.join("\n") });
+  await removeStale();
   return data;
+}
+
+// Lines of the specification's Clarifications section that still mark an answer "(Proposed)", awaiting a 👍.
+async function proposedAnswers(github, repo, ref, feature) {
+  const lines = (await readBlob(github, repo, ref, `${feature}/spec.md`)).text.split("\n");
+  const start = lines.findIndex((line) => /^##\s+Clarifications\b/.test(line));
+  const proposed = [];
+  for (let index = start + 1; start >= 0 && index < lines.length && !/^##\s/.test(lines[index]); index++) {
+    if (lines[index].includes("(Proposed)")) proposed.push(index + 1);
+  }
+  return proposed;
 }
 
 async function clarification(github, repo, pr, entries) {
   const clarify = latest(entries, ["clarify"]);
-  const answers = clarify?.result.clarifications || [];
+  if (!clarify) return null;
+  const answers = clarify.result.clarifications || [];
+  // A later clarification may list fewer answers while the specification still proposes earlier ones.
+  const proposed = await proposedAnswers(github, repo, pr.head.sha, clarify.result.feature);
+  if (proposed.length > answers.length) {
+    const spec = `${clarify.result.feature}/spec.md`;
+    throw new Error(`${spec} still marks ${proposed.length} answer(s) Proposed at line(s) ${proposed.join(", ")}, ` +
+      `but the latest clarification lists ${answers.length}. Comment \`/speckit-clarify\` to publish them again`);
+  }
   if (!answers.length) return null;
   const [published] = (await botComments(github, repo, pr.number, (body) => clarificationMarker.test(body)))
     .sort((a, b) => b.id - a.id);
@@ -1352,7 +1398,10 @@ async function announce({ github, context, needs }) {
   const action = created ? "clarify" : needs.route?.outputs?.action;
   if (!running[action] || !number || !await authorized(github, context, needs.route)) return null;
   const state = await pullRequestState(github, repo, number);
-  if (state) await publishSection(github, repo, state.pr, featureStage(state, action));
+  if (state) {
+    await migrateTitle(github, repo, state.pr);
+    await publishSection(github, repo, state.pr, featureStage(state, action));
+  }
   const approve = action === "implement" || state?.stages.implement ? "✅" : "○";
   const active = action === "apply" ? "apply-review" : ["review", "planreview"].includes(action) ? undefined : action;
   const repair = Number(needs.route?.outputs?.validation);
@@ -1371,6 +1420,12 @@ async function announce({ github, context, needs }) {
     `Started by \`${context.actor}\`. Follow the [workflow run](${runURL(repo, context.runId)}).` +
       (queued ? " Commands posted now wait until this run finishes." : ""),
   ]]);
+}
+
+// Pull requests opened under the earlier prefix would otherwise lose their phases' pushes.
+async function migrateTitle(github, repo, pr) {
+  if (!pr.title?.startsWith(legacyTitlePrefix)) return;
+  await github.rest.pulls.update({ ...repo, pull_number: pr.number, title: titlePrefix + pr.title.slice(legacyTitlePrefix.length) });
 }
 
 async function readiness(github, repo, state, stage) {
@@ -1451,6 +1506,13 @@ async function report({ github, context, needs }) {
     title = `⛔ \`${silent[0]}\` published no result`;
     lines = ["The phase ended without publishing its report, so this run pushed nothing. " +
       "Check the workflow run, then repeat the command."];
+  } else if (route.outputs?.action === "ready" && state.pr.head.sha !== route.outputs.head) {
+    title = "⏸ New commit since the tested one";
+    lines = [
+      `The [container tests](${runURL(repo, Number(route.outputs.tests))}) passed on ` +
+        `\`${String(route.outputs.head).slice(0, 7)}\`, but the pull request now ends at \`${state.pr.head.sha.slice(0, 7)}\`. ` +
+        "It stays a draft until the container tests pass on the new commit.",
+    ];
   } else if (route.outputs?.action === "ready") {
     const tests = runURL(repo, Number(route.outputs.tests));
     try {
