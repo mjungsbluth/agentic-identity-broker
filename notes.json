@@ -8,8 +8,8 @@
     {
       "number": 4,
       "state": "commented",
-      "updated_at": "2026-11-17",
-      "note": "Scan 44120615143 adds GHSA-fc5q-39xc-vjpf in picomatch 2.3.2/4.0.7 across docs and web lockfiles; advisory lists no patch. Submitted evidence on #4. Draft #8 addresses XML parser only; keep issue open."
+      "updated_at": "2026-11-18",
+      "note": "Advisory unchanged: no picomatch patch listed. Production image copies Go binary + built SPA; dev image installs Node tools. No direct matcher imports found in app sources; untrusted-pattern reachability remains unproven. No new human activity, so no repeat comment."
     }
   ],
   "fixes": [
@@ -48,12 +48,6 @@
       "follow_up": null
     },
     {
-      "area": "dependencies",
-      "checked_at": "2026-11-17",
-      "result": "New scheduled scan reports XML parser plus picomatch ReDoS in docs/web lockfiles; advisory updated today lists no patched picomatch version. Lockfile parents verified; no exploit run or exceptions added.",
-      "follow_up": "Assess untrusted-pattern reachability and monitor patched release; #8 alone cannot resolve #4."
-    },
-    {
       "area": "docs",
       "checked_at": "2026-11-17",
       "result": "README and CONTRIBUTING reviewed; all 46 local Markdown path targets exist (anchors/external links not checked). security-scan.sh syntax passes; no worthwhile focused docs edit identified.",
@@ -66,9 +60,21 @@
       "follow_up": "Await administrator action; avoid repeating PR comment."
     },
     {
+      "area": "dependencies",
+      "checked_at": "2026-11-18",
+      "result": "Verified advisory still lacks patched picomatch. Reviewed manifests, direct lockfile parents, Vite config and production/dev Dockerfiles. No direct matcher imports in app sources; this is not a full transitive reachability proof.",
+      "follow_up": "Monitor patch; inspect build/dev transitive input paths before changing risk assessment. Keep #4 open."
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-18",
+      "result": "Scanned all five open issue threads and two open PRs. Submitted question for answered smoke-test #3 and enhancement for feature #5; preserved workflow labels. #5 has active #6; #4 has partial fix #8. No duplicate comments or PRs.",
+      "follow_up": null
+    },
+    {
       "area": "release",
-      "checked_at": "2026-11-17",
-      "result": "Recent commits concern Spec Kit workflow handling; no separate product-release preparation warranted.",
+      "checked_at": "2026-11-18",
+      "result": "Latest five commits are Spec Kit workflow maintenance; no separate product release-preparation PR warranted.",
       "follow_up": null
     }
   ],
@@ -77,7 +83,7 @@
     {
       "task": 10,
       "item": "issue-4-picomatch",
-      "note": "Track GHSA-fc5q-39xc-vjpf patch availability and assess untrusted glob reachability in docs/dev tooling. No patch listed at investigation; no scanner suppression proposed."
+      "note": "Monitor GHSA-fc5q-39xc-vjpf patch. Production image packages static SPA + Go binary, not npm tree; dev image installs tools. Direct source search found no matcher imports; transitive build/dev input reachability remains unproven."
     },
     {
       "task": 6,
