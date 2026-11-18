@@ -1354,7 +1354,7 @@ test("the clarification comment tables each recommended answer with linked alter
   const sha = "a".repeat(40);
   const blob = (line) => `https://github.com/example/broker/blob/${sha}/${spec}/spec.md#L${line}`;
   const second = question({
-    question: "Who | may read @team <b>?", answer: "The denying user", location: `${spec}/spec.md:7`,
+    question: "Who | may read @team <b>?", answer: "The [denying] user | a\\b", location: `${spec}/spec.md:7`,
     alternatives: [{ option: "Any approver", location: `${spec}/spec.md:8` }, { option: "Admins", location: `${spec}/spec.md:9` }],
   });
   const clarified = posted(result("clarify", { clarifications: [question(), second] }), 21);
@@ -1371,7 +1371,7 @@ test("the clarification comment tables each recommended answer with linked alter
     "| Question | Recommended answer | Alternatives |",
     "| --- | --- | --- |",
     `| Q1 Should a permanent denial's reason reach later blocked calls? | [No, only the original approval's decision](${blob(5)}) | [Yes, every later blocked call](${blob(6)}) |`,
-    `| Q2 Who \\| may read @​team &lt;b>? | [The denying user](${blob(7)}) | [Any approver](${blob(8)}) · [Admins](${blob(9)}) |`,
+    `| Q2 Who \\| may read @​team &lt;b>? | [The \\[denying\\] user \\| a\\\\b](${blob(7)}) | [Any approver](${blob(8)}) · [Admins](${blob(9)}) |`,
     "",
     "To choose another answer, comment `/speckit-clarify` with your answer. " +
       "The pipeline updates the specification and replaces this comment.",
