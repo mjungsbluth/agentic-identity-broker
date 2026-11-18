@@ -832,7 +832,7 @@ async function publishClarifications({ github, context, comment }) {
     lengths[name] ??= (await readBlob(github, repo, pr.head.sha, name)).text.split("\n").length;
     if (end > lengths[name]) throw new Error(`Clarification location is past the end of ${name}`);
     const anchor = end === start ? `L${start}` : `L${start}-L${end}`;
-    const label = cell(text).replace(/[[\]]/g, "\\$&");
+    const label = linkLabel(text);
     return `[${label}](https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.sha}/${name}#${anchor})`;
   };
   const rows = [];
@@ -1107,6 +1107,11 @@ async function authorized(github, context, route) {
 
 function cell(text) {
   return quoted(text).replace(/[\\|]/g, "\\$&");
+}
+
+// A link label inside a table cell escapes the cell's characters and the link's brackets.
+function linkLabel(text) {
+  return quoted(text).replace(/[\\|[\]]/g, "\\$&");
 }
 
 function outcome(result) {
