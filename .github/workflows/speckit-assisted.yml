@@ -418,7 +418,8 @@ jobs:
 
   implement:
     needs: [route, announce]
-    if: always() && needs.route.result == 'success' && needs.route.outputs.action == 'implement'
+    if: >-
+      !cancelled() && needs.route.result == 'success' && needs.route.outputs.action == 'implement'
     permissions:
       actions: read
       checks: read
@@ -609,7 +610,8 @@ jobs:
   # Ticked proposal items are the maintainer's sign-off for exactly those changes.
   apply:
     needs: [route, announce]
-    if: always() && needs.route.result == 'success' && needs.route.outputs.action == 'apply'
+    if: >-
+      !cancelled() && needs.route.result == 'success' && needs.route.outputs.action == 'apply'
     permissions:
       actions: read
       checks: read
