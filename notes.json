@@ -9,7 +9,7 @@
       "number": 4,
       "state": "commented",
       "updated_at": "2026-11-18",
-      "note": "Advisory unchanged: no picomatch patch listed. Production image copies Go binary + built SPA; dev image installs Node tools. No direct matcher imports found in app sources; untrusted-pattern reachability remains unproven. No new human activity, so no repeat comment."
+      "note": "Submitted advisory correction: GHSA-fc5q-39xc-vjpf withdrawn at 15:38:56Z; scan 44338133667 still reports it at 15:42Z. Not a clean scan. Keep #4 open for XML fix #8 plus fresh full verification; no suppression proposed."
     }
   ],
   "fixes": [
@@ -18,8 +18,8 @@
       "pr": 8,
       "branch": "repo-assist/fix-issue-4-docs-xml-parser-ae28a5891f373502",
       "status": "open",
-      "updated_at": "2026-11-17",
-      "note": "Draft #8 still open at 254006f; docs build passes, dependency review/settings and gate fail, separate statuses empty. New picomatch finding is outside this fix."
+      "updated_at": "2026-11-18",
+      "note": "Draft #8 still open at 254006f. Docs passes; dependency-review/settings and CI gate failures unchanged; statuses empty. Picomatch advisory is now withdrawn but latest OSV scan still reports it."
     }
   ],
   "checks": [
@@ -28,12 +28,6 @@
       "checked_at": "2026-11-16",
       "result": "Prior fix validation: just check/build/test passed; full verify stopped at OSV API TLS validation, later tiers not reached.",
       "follow_up": "Full verification remains outstanding; no TLS or scanner bypass."
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-17",
-      "result": "Reviewed classifier, dependency-review/gate and security workflow. Lockfile triggers docs plus dependency review; OSV is separate. Gate fails closed on unsupported dependency review; no weakening proposed.",
-      "follow_up": "Settings action recorded on #8 and monthly #7."
     },
     {
       "area": "code",
@@ -54,27 +48,33 @@
       "follow_up": null
     },
     {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-17",
-      "result": "Draft #8 live at 254006f; no human activity or review threads. Docs build passes; dependency-review/settings and gate failures unchanged; commit statuses empty.",
-      "follow_up": "Await administrator action; avoid repeating PR comment."
-    },
-    {
-      "area": "dependencies",
-      "checked_at": "2026-11-18",
-      "result": "Verified advisory still lacks patched picomatch. Reviewed manifests, direct lockfile parents, Vite config and production/dev Dockerfiles. No direct matcher imports in app sources; this is not a full transitive reachability proof.",
-      "follow_up": "Monitor patch; inspect build/dev transitive input paths before changing risk assessment. Keep #4 open."
-    },
-    {
       "area": "hygiene",
       "checked_at": "2026-11-18",
       "result": "Scanned all five open issue threads and two open PRs. Submitted question for answered smoke-test #3 and enhancement for feature #5; preserved workflow labels. #5 has active #6; #4 has partial fix #8. No duplicate comments or PRs.",
       "follow_up": null
     },
     {
+      "area": "dependencies",
+      "checked_at": "2026-11-18",
+      "result": "Latest scan still lists XML parser and picomatch. GitHub now marks GHSA-fc5q-39xc-vjpf withdrawn at 15:38:56Z; scan reports at 15:42Z. Submitted concise correction on #4. No duplicate fix or suppression.",
+      "follow_up": "Fresh whole-tree scan against #8 after data propagation; no clean scan yet."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-18",
+      "result": "Reviewed security workflow and scanner manifest enumeration. Scanner covers ten manifests, fails closed; PR-time dependency review is separate. bash -n scripts/security-scan.sh and git diff --check pass; no code changes warranted.",
+      "follow_up": "Repository-settings blocker already documented on #8; avoid repeat comment."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-18",
+      "result": "Live #8 at 254006f; comments/reviews show no human response. Read all 146 check runs across two pages plus separate statuses: docs build passes, dependency review and gate fail unchanged; statuses empty.",
+      "follow_up": "Wait for administrator action or new checks; no infrastructure-only push."
+    },
+    {
       "area": "release",
       "checked_at": "2026-11-18",
-      "result": "Latest five commits are Spec Kit workflow maintenance; no separate product release-preparation PR warranted.",
+      "result": "Latest five commits concern Spec Kit workflow maintenance; no separate product release-preparation change warranted.",
       "follow_up": null
     }
   ],
@@ -82,13 +82,13 @@
   "priorities": [
     {
       "task": 10,
-      "item": "issue-4-picomatch",
-      "note": "Monitor GHSA-fc5q-39xc-vjpf patch. Production image packages static SPA + Go binary, not npm tree; dev image installs tools. Direct source search found no matcher imports; transitive build/dev input reachability remains unproven."
+      "item": "issue-4-rescan",
+      "note": "Check fresh whole-tree scan against #8 after advisory propagation: GHSA-fc5q-39xc-vjpf is withdrawn, but 44338133667 still reports it. Do not equate withdrawal with clean scan; no exception needed."
     },
     {
       "task": 6,
       "item": "pr-8-dependency-review-settings",
-      "note": "Await administrator Dependency graph action or changed checks. Validate full scan against #8 and keep #4 open for added picomatch finding. Avoid duplicating active spec-driven #6 for #5."
+      "note": "Await administrator Dependency graph action or changed checks. Validate full scan against #8 before resolving #4. Avoid duplicating active spec-driven #6 for #5."
     }
   ]
 }
