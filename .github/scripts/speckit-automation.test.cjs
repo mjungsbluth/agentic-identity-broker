@@ -354,6 +354,28 @@ test("phases refuse pull requests that would lose their pushes or replace the in
   assert.ok(current.updated.every((args) => args.title === undefined));
 });
 
+test("every phase job waits for announce, which renames pull requests under the earlier title prefix", (t) => {
+  const file = path.join(__dirname, "../workflows/speckit-assisted.yml");
+  if (!fs.existsSync(file)) return t.skip("the route job checks out only .github/scripts");
+  const jobs = {};
+  let name;
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    const header = line.match(/^  ([a-z]+):$/);
+    if (header) {
+      name = header[1];
+      jobs[name] = { needs: [], phase: false };
+      continue;
+    }
+    const needs = name && line.match(/^    needs: (?:\[(.*)\]|(\S+))$/);
+    if (needs) jobs[name].needs = (needs[1] ?? needs[2]).split(",").map((entry) => entry.trim());
+    if (name && /^    uses: \.\/\.github\/workflows\/speckit-[a-z-]+\.lock\.yml$/.test(line)) jobs[name].phase = true;
+  }
+  const waits = (job) => job === "announce" || (jobs[job]?.needs || []).some(waits);
+  const phaseJobs = Object.keys(jobs).filter((job) => jobs[job].phase && job !== "specify");
+  assert.ok(phaseJobs.includes("implement") && phaseJobs.includes("fix") && phaseJobs.length >= 9);
+  for (const job of phaseJobs) assert.ok(waits(job), `${job} must wait for announce`);
+});
+
 test("only Specify-created PRs are managed, whatever their body claims", async (t) => {
   preparationIO(t);
   const body = "<!-- speckit-issue: 7 -->\nRelated issue: https://github.com/example/broker/issues/7\n<!-- gh-aw-workflow-id: speckit-specify -->";
@@ -1199,9 +1221,27 @@ test("an implementation that ends without a result is not explained by an earlie
     await report({ ...f, needs: { ...implementing, implement: { result: outcome, outputs: {} } } });
     const { body } = f.created[0];
     assert.ok(body.startsWith("## Spec Kit · ⛔ `implement` published no result\n"), body.slice(0, 80));
-    assert.ok(body.includes("so this run pushed nothing"));
+    assert.ok(body.includes("The phase ended without publishing its report. It may still have pushed a commit: " +
+      "check the pull request's commits and the workflow run, then repeat the command."));
     assert.ok(!body.includes("Old blocker"));
   }
+});
+
+test("a run that published one phase still reports a later phase that ended without a result", async () => {
+  const comments = [posted(result("clarify", { run: "80/1" }), 10, 80), posted(result("plan"), 20)];
+  const planning = {
+    route: { result: "success", outputs: { action: "plan", pr: "42" } },
+    plan: { result: "success", outputs: {} }, tasks: { result: "cancelled", outputs: {} },
+  };
+  const f = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments });
+  await report({ ...f, needs: planning });
+  assert.ok(f.created[0].body.startsWith("## Spec Kit · ⛔ `tasks` published no result\n"), f.created[0].body.slice(0, 80));
+
+  const complete = fixture("issue_comment", commandEvent(command("/speckit-plan")), {
+    comments: [...comments, posted(result("tasks"), 30)],
+  });
+  await report({ ...complete, needs: { ...planning, tasks: { result: "success", outputs: {} } } });
+  assert.ok(!complete.created[0].body.includes("published no result"));
 });
 
 test("a blocked implementation resumes under its approval although it changed the feature directory", async () => {
@@ -2029,7 +2069,7 @@ test("remediation applies the plan review of the same run alongside the analysis
 
 test("planning applies the plan review's findings; a standalone plan review leaves them to /speckit-plan", async () => {
   const comments = [
-    posted(result("clarify"), 10), posted(result("reanalyze", { approvals: [] }), 18),
+    posted(result("clarify"), 10), posted(result("remediate"), 16), posted(result("reanalyze", { approvals: [] }), 18),
     approvalComment({ reanalysis: 18, items: 0 }, { id: 19 }),
     architectureReview([item("F1"), item("F2", { bucket: "question", question: "Which store owns it?" })], { id: 22 }),
   ];

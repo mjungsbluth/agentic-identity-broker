@@ -1466,7 +1466,10 @@ async function report({ github, context, needs }) {
   const error = stopping.find(([, job]) => job.result === "failure" && job.outputs?.error);
   const failed = stopping.find(([, job]) => job.result === "failure");
   // A phase that ran without publishing, such as one that exhausted its model budget or was cancelled.
-  const silent = !last && !failed && jobs.find(([name, job]) => phases.includes(name) && ["success", "cancelled"].includes(job.result));
+  const published = new Set(entries.filter((entry) => runOf(entry.result) === run).map((entry) => entry.result.phase));
+  const jobPhase = (name) => ({ fix: "remediate-review", apply: "apply-review" })[name] ?? name;
+  const silent = !failed && jobs.find(([name, job]) => phases.includes(jobPhase(name)) &&
+    ["success", "cancelled"].includes(job.result) && !published.has(jobPhase(name)));
   const stages = state?.stages || {};
   const tip = stages[phases.filter((phase) => stages[phase]).at(-1)];
   // A failed job without its own result must not be explained by a blocker from an earlier run.
@@ -1504,8 +1507,8 @@ async function report({ github, context, needs }) {
       "The job failed before publishing a result. Check the workflow run, then repeat the command."];
   } else if (silent) {
     title = `⛔ \`${silent[0]}\` published no result`;
-    lines = ["The phase ended without publishing its report, so this run pushed nothing. " +
-      "Check the workflow run, then repeat the command."];
+    lines = ["The phase ended without publishing its report. It may still have pushed a commit: " +
+      "check the pull request's commits and the workflow run, then repeat the command."];
   } else if (route.outputs?.action === "ready" && state.pr.head.sha !== route.outputs.head) {
     title = "⏸ New commit since the tested one";
     lines = [

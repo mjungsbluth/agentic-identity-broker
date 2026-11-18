@@ -120,7 +120,8 @@ jobs:
             });
 
   # Replaces the PR's status comment with "running" so a queued or late command sees that work is in progress.
-  # A new specification announces once specify has created its PR.
+  # A new specification announces once specify has created its PR. It also renames a PR still titled with the earlier
+  # prefix, so the phases that push wait for it; a status it cannot publish only warns.
   announce:
     needs: [route, specify]
     if: >-
@@ -156,7 +157,11 @@ jobs:
           github-token: ${{ steps.app.outputs.token }}
           script: |
             const { announce } = require('./.github/scripts/speckit-automation.cjs');
-            await announce({ github, context, needs: JSON.parse(process.env.NEEDS) });
+            try {
+              await announce({ github, context, needs: JSON.parse(process.env.NEEDS) });
+            } catch (error) {
+              core.warning(`The running status could not be published: ${error.message}`);
+            }
 
   specify:
     needs: route
@@ -180,7 +185,7 @@ jobs:
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   clarify:
-    needs: [route, specify]
+    needs: [route, specify, announce]
     if: >-
       always() && needs.route.result == 'success' &&
       (needs.route.outputs.action == 'clarify' ||
@@ -269,7 +274,7 @@ jobs:
             }
 
   plan:
-    needs: [route, specify, clarified]
+    needs: [route, specify, clarified, announce]
     if: >-
       always() && needs.route.result == 'success' &&
       (needs.route.outputs.action == 'plan' || needs.clarified.outputs.plan == 'true')
@@ -412,8 +417,8 @@ jobs:
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   implement:
-    needs: route
-    if: needs.route.outputs.action == 'implement'
+    needs: [route, announce]
+    if: always() && needs.route.result == 'success' && needs.route.outputs.action == 'implement'
     permissions:
       actions: read
       checks: read
@@ -579,7 +584,7 @@ jobs:
 
   # Automatic fixes stay out of contracts, ADRs, schema, and the approved design; the worker's push scope enforces it.
   fix:
-    needs: [route, reviewed]
+    needs: [route, reviewed, announce]
     if: >-
       always() && needs.reviewed.result == 'success' &&
       needs.reviewed.outputs.auto == 'true' && needs.reviewed.outputs.remediable == 'true'
@@ -603,8 +608,8 @@ jobs:
 
   # Ticked proposal items are the maintainer's sign-off for exactly those changes.
   apply:
-    needs: route
-    if: needs.route.outputs.action == 'apply'
+    needs: [route, announce]
+    if: always() && needs.route.result == 'success' && needs.route.outputs.action == 'apply'
     permissions:
       actions: read
       checks: read
