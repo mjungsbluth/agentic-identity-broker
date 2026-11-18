@@ -143,6 +143,7 @@ function fixture(eventName, payload, options = {}) {
   const minimized = [];
   const dispatched = [];
   const updated = [];
+  const readied = [];
   const sources = { ...files, ...options.extra };
   const hooks = [];
   const github = {
@@ -226,6 +227,12 @@ function fixture(eventName, payload, options = {}) {
       },
     },
     graphql: async (query, { id }) => {
+      if (query.includes("markPullRequestReadyForReview")) {
+        assert.match(query, /markPullRequestReadyForReview\(input: \{pullRequestId: \$id\}\)/);
+        if (options.readyError) throw options.readyError;
+        readied.push(id);
+        return {};
+      }
       assert.match(query, /minimizeComment\(input: \{subjectId: \$id, classifier: OUTDATED\}\)/);
       if (options.unfoldable?.includes(id)) throw new Error("Resource not accessible by integration");
       minimized.push(id);
@@ -234,7 +241,7 @@ function fixture(eventName, payload, options = {}) {
     paginate: async (method, args) => (await method(args)).data,
   };
   return {
-    github, calls, contentReads, created, deleted, minimized, dispatched, hooks, updated,
+    github, calls, contentReads, created, deleted, minimized, dispatched, hooks, updated, readied,
     context: { repo, eventName, payload, actor: "maintainer", runId: 100 },
   };
 }
@@ -2041,7 +2048,8 @@ const maintainerCommands = [
     "listing the API changes, ADRs, and consequential decisions with links to them.",
   "- React with 👍 to the approval comment to approve it, then comment `/speckit-implement [guidance]`. " +
     "If the container tests then fail on the implementation's commit, a repair run starts automatically, " +
-    "up to 3 times per command.",
+    "up to 3 times per command. Once they pass after the architecture review and its fixes, " +
+    "the pipeline marks the pull request ready for review and stops acting on it until it is a draft again.",
   "- `/speckit-plan <change>` revises the specification and design and replaces the approval comment.",
   "- `/speckit-clarify [focus]` revisits the specification. Once a plan exists, it also refreshes the plan " +
     "and the approval comment.",
@@ -2186,6 +2194,47 @@ test("failed container tests on a review fix or an applied proposal start a repa
   }
   assert.deepEqual(await route(repairFixture({ comments: [pushed(62, head), posted(result("remediate-review"), 63)] })),
     { action: "noop" });
+});
+
+test("passing container tests on the last code phase's commit after the architecture review mark the PR ready", async () => {
+  const passed = { runs: { 500: testRun({ conclusion: "success" }) } };
+  const reviewed = [...implemented(60), architectureReview([], { id: 62 })];
+  const fixed = [...implemented(60, 100, {}, "c".repeat(40)), architectureReview([], { id: 62, head: "c".repeat(40) }),
+    pushed(63, head), posted(result("remediate-review"), 64)];
+  for (const comments of [reviewed, fixed]) {
+    assert.deepEqual(await route(repairFixture({ ...passed, comments })),
+      { action: "ready", issue: 7, pr: 42, comment: 0, tests: 500 });
+  }
+  for (const options of [
+    { comments: implemented(60) },
+    { comments: [architectureReview([], { id: 59 }), ...implemented(60)] },
+    { comments: [...implemented(60, 100, {}, "c".repeat(40)), architectureReview([], { id: 62 })] },
+    { comments: [...implemented(60, 100, { status: "blocked", next_step: "1. Decide X" }), architectureReview([], { id: 62 })] },
+    { comments: reviewed, runs: { 500: testRun({ conclusion: "cancelled" }) } },
+    { comments: reviewed, runs: { 500: testRun({ conclusion: "success", head_sha: "b".repeat(40) }) } },
+    { comments: reviewed, pr: { draft: false } },
+  ]) assert.deepEqual(await route(repairFixture({ ...passed, ...options })), { action: "noop" });
+});
+
+test("the report marks the pull request ready for review and says when it cannot", async () => {
+  const comments = [posted(result("clarify"), 10), posted(result("reanalyze"), 13), approvalComment(),
+    ...implemented(60), architectureReview([], { id: 62 })];
+  const needs = { route: { result: "success", outputs: { action: "ready", pr: "42", tests: "500" } } };
+  const ready = fixture("workflow_run", testEvent, { comments, pr: { node_id: "PR_42" } });
+  await report({ ...ready, needs });
+  assert.deepEqual(ready.readied, ["PR_42"]);
+  const { body } = ready.created[0];
+  assert.ok(body.startsWith("## Spec Kit · ✅ Ready for review\n"));
+  assert.ok(body.includes("The [container tests](https://github.com/example/broker/actions/runs/500) passed on `aaaaaaa`"));
+  assert.ok(body.includes("Convert this one back to a draft to use its commands again."));
+
+  const refused = fixture("workflow_run", testEvent, {
+    comments, pr: { node_id: "PR_42" }, readyError: new Error("Resource not accessible by integration"),
+  });
+  await report({ ...refused, needs });
+  assert.deepEqual(refused.readied, []);
+  assert.ok(refused.created[0].body.startsWith("## Spec Kit · ⛔ Could not mark the pull request ready for review\n"));
+  assert.ok(refused.created[0].body.includes("Mark the pull request ready for review yourself."));
 });
 
 test("repairs are bounded per maintainer implementation and a new one allows more", async () => {

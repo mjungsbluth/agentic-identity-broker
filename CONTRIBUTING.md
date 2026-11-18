@@ -180,6 +180,13 @@ stage** line (Specified › Planned › Implemented › Reviewed) and the **Main
 of the current pipeline. It also removes the command list that older pull requests carry
 from the specify agent.
 
+After `/speckit-implement`, the container tests run on the last commit that the pipeline
+pushes. A failure starts a repair run, up to three per command. When the tests pass on that
+commit after the implementation's architecture review and its automatic fixes, the pipeline
+marks the pull request ready for review. It acts only on draft pull requests, so it then
+ignores commands and test results there. Convert the pull request back to a draft to use the
+pipeline again, for example to apply items of a remediation proposal.
+
 The agentic workflows (Spec Kit, architecture review, conflict resolution, Repo Assist, Repo Ask, and the
 grumpy reviewer) open their pull requests, push, comment, review, and react as the Agentic Workflows App, never as `github-actions[bot]` or a personal token. They need the App
 described under [Opt-in conflict resolution](#opt-in-conflict-resolution) with Actions read/write

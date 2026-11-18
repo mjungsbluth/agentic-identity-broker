@@ -9,8 +9,9 @@ on:
     types: [created, edited] # An edit only matters when a maintainer ticks boxes in the pipeline's own remediation proposal.
   pull_request_review: # Runs from the PR merge ref; routing still executes default-branch code and managed PRs cannot change .github.
     types: [submitted]
-  # Failed container tests on a code phase's commit start a bounded repair. The tests run the PR code in the branch's
-  # own unprivileged context; this workflow only reads their outcome and reports as data, and repairs in the sandbox.
+  # Failed container tests on a code phase's commit start a bounded repair; passing ones after the architecture review
+  # mark the PR ready for review. The tests run the PR code in the branch's own unprivileged context; this workflow only
+  # reads their outcome and reports as data, and repairs in the sandbox.
   workflow_run: # zizmor: ignore[dangerous-triggers] -- Never checks out or executes code from the test run.
     workflows: [Container tests]
     types: [completed]
@@ -40,7 +41,7 @@ jobs:
       (github.event_name == 'pull_request_review' && github.event.review.user.type == 'User' &&
         startsWith(github.event.review.body, '/speckit-')) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch' &&
-        github.event.workflow_run.conclusion == 'failure' &&
+        (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success') &&
         startsWith(github.event.workflow_run.head_branch, 'speckit/issue-'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -58,6 +59,7 @@ jobs:
       proposal: ${{ steps.route.outputs.proposal }}
       validation: ${{ steps.route.outputs.validation }}
       round: ${{ steps.route.outputs.round }}
+      tests: ${{ steps.route.outputs.tests }}
       error: ${{ steps.route.outputs.error }}
     steps:
       - name: Checkout trusted automation only
@@ -121,7 +123,7 @@ jobs:
   announce:
     needs: [route, specify]
     if: >-
-      always() && needs.route.result == 'success' && needs.route.outputs.action != 'noop' &&
+      always() && needs.route.result == 'success' && !contains(fromJSON('["noop", "ready"]'), needs.route.outputs.action) &&
       (needs.route.outputs.pr != '0' || needs.specify.outputs.created_pr_number != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5

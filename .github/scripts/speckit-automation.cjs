@@ -385,12 +385,33 @@ async function failedJobs(github, repo, id) {
 
 // The container tests run the pushed code in the PR branch's own context, without privileges or secrets;
 // this pipeline only reads their outcome and test reports as data.
-async function testFailure(github, repo, pr, id) {
+async function testRun(github, repo, pr, id) {
   const { data: run } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: id });
-  if (run.path?.split("@")[0] !== testsWorkflow || run.event !== "workflow_dispatch" || run.conclusion !== "failure" ||
+  if (run.path?.split("@")[0] !== testsWorkflow || run.event !== "workflow_dispatch" ||
       run.head_branch !== pr.head.ref || run.head_sha !== pr.head.sha ||
       run.head_repository?.full_name !== `${repo.owner}/${repo.repo}`) return null;
+  return run;
+}
+
+async function testFailure(github, repo, pr, id) {
+  const run = await testRun(github, repo, pr, id);
+  if (run?.conclusion !== "failure") return null;
   return { run: run.id, url: run.html_url, head: run.head_sha, jobs: await failedJobs(github, repo, run.id) };
+}
+
+// Green tests end the sequence after implementation only once its architecture review has run.
+function reviewedImplementation(entries, comments) {
+  const [base] = entries.filter(({ result }) => result.phase === "implement" && !result.repair)
+    .sort((a, b) => b.comment.id - a.comment.id);
+  return Boolean(base) && comments.some((comment) => comment.id > base.comment.id && parseReview(comment));
+}
+
+// The REST API cannot change a pull request's draft state.
+async function markReady(github, pr) {
+  await github.graphql(
+    "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }",
+    { id: pr.node_id },
+  );
 }
 
 // A repair answers the container tests only on the commit that the latest code phase (implementation, review fix, or
@@ -452,11 +473,17 @@ async function routeRepair(github, repo, payload) {
   if (!number) return { action: "noop" };
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
   const issue = managedPR(pr, repo);
-  if (!issue || !await testFailure(github, repo, pr, run.id)) return { action: "noop" };
+  const tests = issue ? await testRun(github, repo, pr, run.id) : null;
+  if (!["failure", "success"].includes(tests?.conclusion)) return { action: "noop" };
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
   const entries = comments.map((comment) => ({ comment, result: parseResult(comment) })).filter((entry) => entry.result);
   const repair = await repairs(github, repo, pr, entries, comments);
   if (!repair) return { action: "noop" };
+  // Passing tests on the commit of the last code phase hand the reviewed implementation to human review.
+  if (tests.conclusion === "success") {
+    return reviewedImplementation(entries, comments) ? { action: "ready", issue, pr: number, comment: 0, tests: run.id } :
+      { action: "noop" };
+  }
   const routed = { issue, pr: number, comment: 0, validation: run.id, round: repair.round };
   if (repair.round > maxRepairs) return { action: "exhausted", ...routed };
   try {
@@ -1268,7 +1295,8 @@ function maintainerCommands() {
       "listing the API changes, ADRs, and consequential decisions with links to them.",
     "- React with 👍 to the approval comment to approve it, then comment `/speckit-implement [guidance]`. " +
       "If the container tests then fail on the implementation's commit, a repair run starts automatically, " +
-      `up to ${maxRepairs} times per command.`,
+      `up to ${maxRepairs} times per command. Once they pass after the architecture review and its fixes, ` +
+      "the pipeline marks the pull request ready for review and stops acting on it until it is a draft again.",
     "- `/speckit-plan <change>` revises the specification and design and replaces the approval comment.",
     "- `/speckit-clarify [focus]` revisits the specification. Once a plan exists, it also refreshes the plan " +
       "and the approval comment.",
@@ -1418,6 +1446,20 @@ async function report({ github, context, needs }) {
     title = `⛔ \`${silent[0]}\` published no result`;
     lines = ["The phase ended without publishing its report, so this run pushed nothing. " +
       "Check the workflow run, then repeat the command."];
+  } else if (route.outputs?.action === "ready") {
+    const tests = runURL(repo, Number(route.outputs.tests));
+    try {
+      await markReady(github, state.pr);
+      title = "✅ Ready for review";
+      lines = [
+        `The [container tests](${tests}) passed on \`${state.pr.head.sha.slice(0, 7)}\`, the last commit of the pipeline's ` +
+          "implementation and review fixes, so the pull request is now ready for review.",
+        "", "The pipeline acts only on draft pull requests. Convert this one back to a draft to use its commands again.",
+      ];
+    } catch (error) {
+      title = "⛔ Could not mark the pull request ready for review";
+      lines = [quoted(error.message), "", `The [container tests](${tests}) passed. Mark the pull request ready for review yourself.`];
+    }
   } else if (findings.length) {
     title = `⚠️ ${findings.length} blocking finding${findings.length === 1 ? "" : "s"}`;
     lines = [
@@ -1433,7 +1475,8 @@ async function report({ github, context, needs }) {
     lines = [
       "Container tests run on the pushed commit. If they fail, a repair run starts automatically, " +
         `up to ${maxRepairs} times after each \`/speckit-implement\`.`,
-      "When CI is green, review the changes, then mark the pull request ready for review.", "", details(stages.implement),
+      "When they pass after the architecture review, the pipeline marks the pull request ready for review.", "",
+      details(stages.implement),
     ];
   } else if (reanalysis) {
     ({ title, lines, icon: approve } = await readiness(github, repo, state, reanalysis));
