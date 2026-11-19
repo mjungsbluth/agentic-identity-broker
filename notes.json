@@ -8,8 +8,8 @@
     {
       "number": 4,
       "state": "commented",
-      "updated_at": "2026-11-18",
-      "note": "Submitted advisory correction: GHSA-fc5q-39xc-vjpf withdrawn at 15:38:56Z; scan 44338133667 still reports it at 15:42Z. Not a clean scan. Keep #4 open for XML fix #8 plus fresh full verification; no suppression proposed."
+      "updated_at": "2026-11-19",
+      "note": "Latest scheduled scan 44558303293 lists only XML parser; picomatch gone. #8 merge a1173ca submitted for publication; whole-tree validation against fix still pending. No repeated issue comment."
     }
   ],
   "fixes": [
@@ -18,8 +18,8 @@
       "pr": 8,
       "branch": "repo-assist/fix-issue-4-docs-xml-parser-ae28a5891f373502",
       "status": "open",
-      "updated_at": "2026-11-18",
-      "note": "Draft #8 still open at 254006f. Docs passes; dependency-review/settings and CI gate failures unchanged; statuses empty. Picomatch advisory is now withdrawn but latest OSV scan still reports it."
+      "updated_at": "2026-11-19",
+      "note": "Live head 254006f; submitted append-only merge a1173ca of aw-dev cdb1620. Resulting local PR diff only XML lockfile. Tests/docs pass; verify scanner compilation killed. Confirm publication next run; Dependency review settings still pending."
     }
   ],
   "checks": [
@@ -30,71 +30,71 @@
       "follow_up": null
     },
     {
-      "area": "tests",
-      "checked_at": "2026-11-17",
-      "result": "Task 5 fallback 9 inspected CI build-flag coverage: broker/ExtProc native stripped+debug and CIMD/mock/ExtProc image variants already exercise verifier. No redundant test PR proposed; Docker not run here.",
-      "follow_up": null
-    },
-    {
-      "area": "dependencies",
-      "checked_at": "2026-11-18",
-      "result": "Latest scan still lists XML parser and picomatch. GitHub now marks GHSA-fc5q-39xc-vjpf withdrawn at 15:38:56Z; scan reports at 15:42Z. Submitted concise correction on #4. No duplicate fix or suppression.",
-      "follow_up": "Fresh whole-tree scan against #8 after data propagation; no clean scan yet."
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-18",
-      "result": "Reviewed security workflow and scanner manifest enumeration. Scanner covers ten manifests, fails closed; PR-time dependency review is separate. bash -n scripts/security-scan.sh and git diff --check pass; no code changes warranted.",
-      "follow_up": "Repository-settings blocker already documented on #8; avoid repeat comment."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-18",
-      "result": "Live #8 at 254006f; comments/reviews show no human response. Read all 146 check runs across two pages plus separate statuses: docs build passes, dependency review and gate fail unchanged; statuses empty.",
-      "follow_up": "Wait for administrator action or new checks; no infrastructure-only push."
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-19",
-      "result": "Task 7: corrected migration Job and operator cluster names in kubernetes.md against Helm renders; committed 27bdcf2 on repo-assist/basics-kubernetes-resource-names-20261119. Docs build passes; 23 unchanged baseline markdownlint findings.",
-      "follow_up": "Draft PR submission intended this run; resolve published number by branch next run. No dependency or template changes."
-    },
-    {
-      "area": "build",
-      "checked_at": "2026-11-19",
-      "result": "just check, just build and just test pass. Full just verify stops at OSV querybatch TLS certificate-validation failure; later test/integration/E2E tiers not reached. No bypass attempted.",
-      "follow_up": "Full verification remains outstanding in CI."
-    },
-    {
       "area": "qa",
       "checked_at": "2026-11-19",
       "result": "Helm lint and external PostgreSQL/operator template renders pass. Guide now uses broker-agentic-identity-broker-migrate and my-team-broker-agentic-identity-broker; override caveat added. No cluster or Docker execution.",
       "follow_up": null
     },
     {
+      "area": "dependencies",
+      "checked_at": "2026-11-19",
+      "result": "Run 44558303293 scans ten manifests; only fast-xml-parser 5.11.1 -> 5.12.0 remains. Picomatch no longer reported. #8 already contains exact XML fix; clean install and npm ls pass.",
+      "follow_up": "Whole-tree scan against fix still required; default-branch failure is not a PR verdict."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-19",
+      "result": "Reviewed security workflow/script and #8/#10 checks across all pages plus separate statuses. #8 docs passes; Dependency review/settings and gate fail unchanged. #10 CI gate/docs pass; statuses empty.",
+      "follow_up": "No settings workaround; administrator action remains needed on #8."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-19",
+      "result": "Task 10/6: #8 dirty with unrelated old workflow ancestry. Submitted merge a1173ca preserving current aw-dev workflow tree; local diff now only XML lockfile. #10 publication confirmed at 1d2f574; clean, checks pass, draft.",
+      "follow_up": "Confirm #8 merge publication and rerun checks next run; do not describe submitted push as applied."
+    },
+    {
+      "area": "docs",
+      "checked_at": "2026-11-19",
+      "result": "#10 is the published Kubernetes-name draft; no new docs work needed. For #8, clean docs install, dependency tree and production build pass; existing CSS-minimizer warning remains.",
+      "follow_up": null
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-19",
+      "result": "just check/build/test pass after merging current default into #8. Full just verify stops compiling pinned scanner: anthropic-sdk-go compiler killed. No local security verdict; later full-gate tiers not reached.",
+      "follow_up": "Full verification remains outstanding in CI; scanner controls unchanged."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-19",
+      "result": "All 117 Spec Kit/architecture Node tests and just test with race detection pass on merged #8 tree. git diff --check and staged whitespace checks pass. No test or production behavior changes beyond existing dependency fix.",
+      "follow_up": null
+    },
+    {
       "area": "hygiene",
       "checked_at": "2026-11-19",
-      "result": "Tasks 2 and 3: reviewed all five open issue threads and live PR inventory; #4 has #8, #5 has #6, #3 answered. No new human activity, duplicate fixes or repeated comments. Task 3 fallback 2/1 exhausted (all labelled).",
+      "result": "Task 3 -> 2/1: inspected all five open issue threads and active drafts. All issues labelled; #4/#5 already have #8/#6. No new human discussion. Maintained #8 rather than duplicating fixes; no generic sweep needed after substantive merge work.",
       "follow_up": null
     },
     {
       "area": "release",
       "checked_at": "2026-11-19",
-      "result": "Recent default-branch changes are Spec Kit workflow maintenance; this run changes deployment docs only. No separate product release-preparation PR warranted.",
+      "result": "Current changes are workflow maintenance; this run maintains an existing docs dependency draft. No separate product-release PR warranted.",
       "follow_up": null
     }
   ],
   "completed_actions": [],
   "priorities": [
     {
-      "task": 10,
-      "item": "issue-4-rescan",
-      "note": "Check fresh whole-tree scan against #8 after advisory propagation: GHSA-fc5q-39xc-vjpf is withdrawn, but 44338133667 still reports it. Do not equate withdrawal with clean scan; no exception needed."
+      "task": 6,
+      "item": "pr-8-publication-and-checks",
+      "note": "Confirm submitted a1173ca landed (or equivalent preserved merge). Local tree matches aw-dev cdb1620 except XML lockfile. Read both checks and statuses; administrator Dependency graph action remains pending."
     },
     {
-      "task": 6,
-      "item": "pr-8-dependency-review-settings",
-      "note": "Await administrator Dependency graph action or changed checks. Validate full scan against #8 before resolving #4. Avoid duplicating active spec-driven #6 for #5."
+      "task": 10,
+      "item": "issue-4-rescan",
+      "note": "Latest default-branch scan 44558303293 now only XML parser. Need whole-tree scan against #8; local verify failed compiling pinned scanner (compiler killed), not a clean verdict. No suppression or downgrade."
     }
   ]
 }
