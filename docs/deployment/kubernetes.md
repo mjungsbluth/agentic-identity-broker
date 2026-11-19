@@ -108,10 +108,15 @@ helm install broker ./charts/agentic-identity-broker \
 
 #### Step 4: Examine deployment
 
+With release name `broker` and no name overrides, the chart's resource name is
+`broker-agentic-identity-broker`. The migration Job adds the suffix `-migrate`.
+Adjust the names below if you change the release name, `nameOverride`, or
+`fullnameOverride`.
+
 ```bash
 # Check migration Job completed
 kubectl get jobs
-kubectl logs job/broker-migrate
+kubectl logs job/broker-agentic-identity-broker-migrate
 
 # Check broker pod is running
 kubectl get pods -l app.kubernetes.io/name=agentic-identity-broker
@@ -149,7 +154,7 @@ helm install broker ./charts/agentic-identity-broker \
 ```
 
 The operator does the following:
-1. Creates a PostgreSQL cluster (`my-team-broker`).
+1. Creates a PostgreSQL cluster (`my-team-broker-agentic-identity-broker`).
 2. Creates the migration user `broker-migration`.
 3. Creates the broker user `broker`.
 4. Generates Kubernetes Secrets.
@@ -374,7 +379,7 @@ The broker exposes health endpoints:
 kubectl logs -l app.kubernetes.io/name=agentic-identity-broker -f
 
 # Migration logs
-kubectl logs job/broker-migrate
+kubectl logs job/broker-agentic-identity-broker-migrate
 ```
 
 ### Metrics
@@ -508,8 +513,8 @@ spec:
 
 **Diagnosis**:
 ```bash
-kubectl logs job/broker-migrate
-kubectl describe job/broker-migrate
+kubectl logs job/broker-agentic-identity-broker-migrate
+kubectl describe job/broker-agentic-identity-broker-migrate
 ```
 
 **Common Causes**:
@@ -538,7 +543,7 @@ kubectl describe pod <pod-name>
 
 **Diagnosis**:
 ```bash
-kubectl describe postgresql <teamId>-broker
+kubectl describe postgresql <teamId>-broker-agentic-identity-broker
 kubectl logs -n postgres-operator deployment/postgres-operator
 ```
 
@@ -554,7 +559,7 @@ kubectl logs -n postgres-operator deployment/postgres-operator
 helm uninstall broker
 
 # (Optional) Delete PostgreSQL cluster
-kubectl delete postgresql <teamId>-broker
+kubectl delete postgresql <teamId>-broker-agentic-identity-broker
 
 # (Optional) Delete PVCs
 kubectl delete pvc -l application=spilo
