@@ -749,7 +749,7 @@ jobs:
   # After a code phase pushes, the container tests run on its commit in the PR branch's own context; their failure
   # starts a repair through workflow_run. This job never checks out PR code.
   tests:
-    needs: [route, implement, verify, review, reviewed, fix, verified, apply]
+    needs: [route, implement, verify, review, reviewed, fix, verified, apply, rereview]
     if: >-
       always() && needs.route.result == 'success' &&
       needs.verify.result != 'failure' && needs.verified.result != 'failure' &&

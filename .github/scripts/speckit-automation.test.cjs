@@ -354,7 +354,7 @@ test("phases refuse pull requests that would lose their pushes or replace the in
   assert.ok(current.updated.every((args) => args.title === undefined));
 });
 
-test("every phase job waits for announce, which renames pull requests under the earlier title prefix", (t) => {
+test("phase jobs wait for announce, and the container tests wait for the re-review", (t) => {
   const file = path.join(__dirname, "../workflows/speckit-assisted.yml");
   if (!fs.existsSync(file)) return t.skip("the route job checks out only .github/scripts");
   const jobs = {};
@@ -374,6 +374,8 @@ test("every phase job waits for announce, which renames pull requests under the 
   const phaseJobs = Object.keys(jobs).filter((job) => jobs[job].phase && job !== "specify");
   assert.ok(phaseJobs.includes("implement") && phaseJobs.includes("fix") && phaseJobs.length >= 9);
   for (const job of phaseJobs) assert.ok(waits(job), `${job} must wait for announce`);
+  // Passing container tests can mark the PR ready, after which the re-review's proposal could not be published.
+  assert.ok(jobs.tests.needs.includes("rereview"), "tests must wait for rereview");
 });
 
 test("only Specify-created PRs are managed, whatever their body claims", async (t) => {
@@ -2292,11 +2294,15 @@ test("passing container tests on the last code phase's commit after the architec
   const reviewed = [...implemented(60), architectureReview([], { id: 62 })];
   const fixed = [...implemented(60, 100, {}, "c".repeat(40)), architectureReview([], { id: 62, head: "c".repeat(40) }),
     pushed(63, head), posted(result("remediate-review"), 64)];
-  for (const comments of [reviewed, fixed]) {
+  const rereviewed = [...fixed, architectureReview([], { id: 65 })];
+  const repaired = [...implemented(60, 100, {}, "c".repeat(40)), architectureReview([], { id: 62, head: "c".repeat(40) }),
+    ...implemented(64, 101, { repair: 1 })];
+  for (const comments of [reviewed, rereviewed, repaired]) {
     assert.deepEqual(await route(repairFixture({ ...passed, comments })),
       { action: "ready", issue: 7, pr: 42, comment: 0, tests: 500, head });
   }
   for (const options of [
+    { comments: fixed },
     { comments: implemented(60) },
     { comments: [architectureReview([], { id: 59 }), ...implemented(60)] },
     { comments: [...implemented(60, 100, {}, "c".repeat(40)), architectureReview([], { id: 62 })] },

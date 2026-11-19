@@ -412,11 +412,12 @@ async function testFailure(github, repo, pr, id) {
   return { run: run.id, url: run.html_url, head: run.head_sha, jobs: await failedJobs(github, repo, run.id) };
 }
 
-// Green tests end the sequence after implementation only once its architecture review has run.
+// Green tests end the sequence only once an architecture review has followed the latest reviewed code change:
+// the implementation, a review fix, or an applied proposal. Repairs of test failures start no review.
 function reviewedImplementation(entries, comments) {
-  const [base] = entries.filter(({ result }) => result.phase === "implement" && !result.repair)
+  const [changed] = entries.filter(({ result }) => codePhases.includes(result.phase) && !result.repair)
     .sort((a, b) => b.comment.id - a.comment.id);
-  return Boolean(base) && comments.some((comment) => comment.id > base.comment.id && parseReview(comment));
+  return Boolean(changed) && comments.some((comment) => comment.id > changed.comment.id && parseReview(comment));
 }
 
 // The REST API cannot change a pull request's draft state.
