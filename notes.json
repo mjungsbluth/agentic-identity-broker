@@ -24,12 +24,6 @@
   ],
   "checks": [
     {
-      "area": "build",
-      "checked_at": "2026-11-16",
-      "result": "Prior fix validation: just check/build/test passed; full verify stopped at OSV API TLS validation, later tiers not reached.",
-      "follow_up": "Full verification remains outstanding; no TLS or scanner bypass."
-    },
-    {
       "area": "code",
       "checked_at": "2026-11-17",
       "result": "Task 5 inspected scripts/verify-go-binary.sh: checks trimpath, DWARF presence/absence and trimmed source locations. No verified low-risk code defect; bash syntax check passes.",
@@ -39,18 +33,6 @@
       "area": "tests",
       "checked_at": "2026-11-17",
       "result": "Task 5 fallback 9 inspected CI build-flag coverage: broker/ExtProc native stripped+debug and CIMD/mock/ExtProc image variants already exercise verifier. No redundant test PR proposed; Docker not run here.",
-      "follow_up": null
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-17",
-      "result": "README and CONTRIBUTING reviewed; all 46 local Markdown path targets exist (anchors/external links not checked). security-scan.sh syntax passes; no worthwhile focused docs edit identified.",
-      "follow_up": null
-    },
-    {
-      "area": "hygiene",
-      "checked_at": "2026-11-18",
-      "result": "Scanned all five open issue threads and two open PRs. Submitted question for answered smoke-test #3 and enhancement for feature #5; preserved workflow labels. #5 has active #6; #4 has partial fix #8. No duplicate comments or PRs.",
       "follow_up": null
     },
     {
@@ -72,9 +54,33 @@
       "follow_up": "Wait for administrator action or new checks; no infrastructure-only push."
     },
     {
+      "area": "docs",
+      "checked_at": "2026-11-19",
+      "result": "Task 7: corrected migration Job and operator cluster names in kubernetes.md against Helm renders; committed 27bdcf2 on repo-assist/basics-kubernetes-resource-names-20261119. Docs build passes; 23 unchanged baseline markdownlint findings.",
+      "follow_up": "Draft PR submission intended this run; resolve published number by branch next run. No dependency or template changes."
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-19",
+      "result": "just check, just build and just test pass. Full just verify stops at OSV querybatch TLS certificate-validation failure; later test/integration/E2E tiers not reached. No bypass attempted.",
+      "follow_up": "Full verification remains outstanding in CI."
+    },
+    {
+      "area": "qa",
+      "checked_at": "2026-11-19",
+      "result": "Helm lint and external PostgreSQL/operator template renders pass. Guide now uses broker-agentic-identity-broker-migrate and my-team-broker-agentic-identity-broker; override caveat added. No cluster or Docker execution.",
+      "follow_up": null
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-19",
+      "result": "Tasks 2 and 3: reviewed all five open issue threads and live PR inventory; #4 has #8, #5 has #6, #3 answered. No new human activity, duplicate fixes or repeated comments. Task 3 fallback 2/1 exhausted (all labelled).",
+      "follow_up": null
+    },
+    {
       "area": "release",
-      "checked_at": "2026-11-18",
-      "result": "Latest five commits concern Spec Kit workflow maintenance; no separate product release-preparation change warranted.",
+      "checked_at": "2026-11-19",
+      "result": "Recent default-branch changes are Spec Kit workflow maintenance; this run changes deployment docs only. No separate product release-preparation PR warranted.",
       "follow_up": null
     }
   ],
