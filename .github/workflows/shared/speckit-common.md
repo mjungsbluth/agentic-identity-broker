@@ -31,13 +31,16 @@ runtimes:
 jobs:
   agent:
     timeout-minutes: 200
-# gh-aw restores the skills into the workspace's ignored .pi/ directory, which the agent's checkout of the PR head
-# could replace; the agent reads this copy instead.
+# The skills listed above stay in the default branch's .agents/skills, and gh-aw restores only inline skills into
+# .pi/skills, which may not exist. The agent's checkout of the PR head can replace both, so it reads this copy.
 pre-agent-steps:
   - name: Preserve the installed skills
     run: |
       rm -rf /tmp/gh-aw/speckit/skills
-      cp -R .pi/skills /tmp/gh-aw/speckit/skills
+      mkdir -p /tmp/gh-aw/speckit/skills
+      cp -R .agents/skills/. /tmp/gh-aw/speckit/skills/
+      if [ -d .pi/skills ]; then cp -R .pi/skills/. /tmp/gh-aw/speckit/skills/; fi
+      test -f /tmp/gh-aw/speckit/skills/speckit-implement/SKILL.md
 steps:
   - name: Preserve trusted automation code
     run: |
