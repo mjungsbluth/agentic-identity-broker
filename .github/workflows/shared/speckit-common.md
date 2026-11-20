@@ -31,10 +31,11 @@ runtimes:
 jobs:
   agent:
     timeout-minutes: 200
-# The skills listed above stay in the default branch's .agents/skills, and gh-aw restores only inline skills into
-# .pi/skills, which may not exist. The agent's checkout of the PR head can replace both, so it reads this copy.
+# Every phase follows the default branch's skills, which match these instructions, even after the agent checks out a
+# feature branch that predates them. The listed skills stay in .agents/skills; gh-aw restores only inline skills into
+# .pi/skills, which may not exist.
 pre-agent-steps:
-  - name: Preserve the installed skills
+  - name: Copy the default branch's skills
     run: |
       rm -rf /tmp/gh-aw/speckit/skills
       mkdir -p /tmp/gh-aw/speckit/skills
