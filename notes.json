@@ -8,8 +8,14 @@
     {
       "number": 4,
       "state": "commented",
-      "updated_at": "2026-11-19",
-      "note": "Latest scheduled scan 44558303293 lists only XML parser; picomatch gone. #8 merge a1173ca submitted for publication; whole-tree validation against fix still pending. No repeated issue comment."
+      "updated_at": "2026-11-20",
+      "note": "#8 remains at 254006f after rejected merge publication; whole-tree validation still pending. No new issue activity requiring another response."
+    },
+    {
+      "number": 11,
+      "state": "commented",
+      "updated_at": "2026-11-20",
+      "note": "Diagnosed rejected #8 merge: incoming base workflow changes require unavailable authorization. Submitted bug label and explanation. Pause automated merge retries; maintainer reconciliation needed."
     }
   ],
   "fixes": [
@@ -18,8 +24,8 @@
       "pr": 8,
       "branch": "repo-assist/fix-issue-4-docs-xml-parser-ae28a5891f373502",
       "status": "open",
-      "updated_at": "2026-11-19",
-      "note": "Live head 254006f; submitted append-only merge a1173ca of aw-dev cdb1620. Resulting local PR diff only XML lockfile. Tests/docs pass; verify scanner compilation killed. Confirm publication next run; Dependency review settings still pending."
+      "updated_at": "2026-11-20",
+      "note": "Live head still 254006f; prior a1173ca publication rejected on workflow-file permission boundary. Conflicts remain. Do not retry or rewrite history. Maintainer reconciliation and Dependency review settings action needed."
     }
   ],
   "checks": [
@@ -30,34 +36,10 @@
       "follow_up": null
     },
     {
-      "area": "qa",
-      "checked_at": "2026-11-19",
-      "result": "Helm lint and external PostgreSQL/operator template renders pass. Guide now uses broker-agentic-identity-broker-migrate and my-team-broker-agentic-identity-broker; override caveat added. No cluster or Docker execution.",
-      "follow_up": null
-    },
-    {
       "area": "dependencies",
       "checked_at": "2026-11-19",
       "result": "Run 44558303293 scans ten manifests; only fast-xml-parser 5.11.1 -> 5.12.0 remains. Picomatch no longer reported. #8 already contains exact XML fix; clean install and npm ls pass.",
       "follow_up": "Whole-tree scan against fix still required; default-branch failure is not a PR verdict."
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-19",
-      "result": "Reviewed security workflow/script and #8/#10 checks across all pages plus separate statuses. #8 docs passes; Dependency review/settings and gate fail unchanged. #10 CI gate/docs pass; statuses empty.",
-      "follow_up": "No settings workaround; administrator action remains needed on #8."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-19",
-      "result": "Task 10/6: #8 dirty with unrelated old workflow ancestry. Submitted merge a1173ca preserving current aw-dev workflow tree; local diff now only XML lockfile. #10 publication confirmed at 1d2f574; clean, checks pass, draft.",
-      "follow_up": "Confirm #8 merge publication and rerun checks next run; do not describe submitted push as applied."
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-19",
-      "result": "#10 is the published Kubernetes-name draft; no new docs work needed. For #8, clean docs install, dependency tree and production build pass; existing CSS-minimizer warning remains.",
-      "follow_up": null
     },
     {
       "area": "build",
@@ -72,15 +54,39 @@
       "follow_up": null
     },
     {
-      "area": "hygiene",
-      "checked_at": "2026-11-19",
-      "result": "Task 3 -> 2/1: inspected all five open issue threads and active drafts. All issues labelled; #4/#5 already have #8/#6. No new human discussion. Maintained #8 rather than duplicating fixes; no generic sweep needed after substantive merge work.",
-      "follow_up": null
-    },
-    {
       "area": "release",
       "checked_at": "2026-11-19",
       "result": "Current changes are workflow maintenance; this run maintains an existing docs dependency draft. No separate product-release PR warranted.",
+      "follow_up": null
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-20",
+      "result": "Read all 146 #8 and 74 #10 checks plus separate empty statuses. #8 docs passes, Dependency review and CI gate fail unchanged; #10 docs and CI gate pass. Prior publishing job failed.",
+      "follow_up": "#11 documents workflow-file permission rejection; no retry or permission changes."
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-20",
+      "result": "#8 merge a1173ca did not publish: live head 254006f and conflicts remain. Incoming aw-dev workflow changes cross permission boundary despite lockfile-only final base diff. #10 remains clean draft at 1d2f574.",
+      "follow_up": "Maintainer must reconcile #8 through an already-authorized workflow before automated maintenance resumes."
+    },
+    {
+      "area": "qa",
+      "checked_at": "2026-11-20",
+      "result": "Helm lint and external PostgreSQL migration/operator template renders pass. Confirmed migration Job broker-agentic-identity-broker-migrate and operator cluster my-team-broker-agentic-identity-broker. No cluster or Docker execution.",
+      "follow_up": null
+    },
+    {
+      "area": "docs",
+      "checked_at": "2026-11-20",
+      "result": "Task 7 rechecked Kubernetes guide against helpers and rendered resources. Existing draft #10 covers the verified name mismatch; no duplicate change. No source edits or application builds/tests this run.",
+      "follow_up": null
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-20",
+      "result": "Tasks 2/3: reviewed six issue threads and active fixes. #11 is new actionable publication failure; submitted diagnosis and bug label. #4/#5 already have #8/#6. Substantive investigation made generic sweep unnecessary.",
       "follow_up": null
     }
   ],
@@ -88,13 +94,13 @@
   "priorities": [
     {
       "task": 6,
-      "item": "pr-8-publication-and-checks",
-      "note": "Confirm submitted a1173ca landed (or equivalent preserved merge). Local tree matches aw-dev cdb1620 except XML lockfile. Read both checks and statuses; administrator Dependency graph action remains pending."
+      "item": "pr-8-maintainer-blocked",
+      "note": "Do not retry rejected workflow-containing merge. Wait for maintainer reconciliation via authorized workflow or authorization change; confirm live head before claiming an update."
     },
     {
       "task": 10,
       "item": "issue-4-rescan",
-      "note": "Latest default-branch scan 44558303293 now only XML parser. Need whole-tree scan against #8; local verify failed compiling pinned scanner (compiler killed), not a clean verdict. No suppression or downgrade."
+      "note": "Whole-tree scan against #8 still required after maintainer reconciliation. Prior compiler-killed scanner run is not a clean verdict; no suppression or downgrade."
     }
   ]
 }
