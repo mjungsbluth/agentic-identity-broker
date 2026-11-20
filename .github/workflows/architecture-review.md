@@ -19,6 +19,9 @@ on:
         default: ""
 engine: pi
 model: copilot/claude-opus-5.5
+# Nine Opus sub-agents and the synthesis exceed the default budget of 1000 AI credits on a large pull request.
+# The compiler silently drops an expression here, so the budget must be a literal.
+max-ai-credits: 3000
 checkout:
   ref: ${{ github.event.repository.default_branch }}
   pull-request: false

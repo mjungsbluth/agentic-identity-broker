@@ -205,8 +205,9 @@ mirror of upstream. A `/speckit-` command in a pull request review is the except
 workflow file from the pull request's merge ref.
 
 Each agent run stops at the AI credit budget that the Actions variable `GH_AW_DEFAULT_MAX_AI_CREDITS`
-sets, 1000 when it is unset. A plan review or an implementation can exceed that, so a fork sets
-the variable as well.
+sets, 1000 when it is unset. An implementation can exceed that, so a fork sets the variable as well.
+The architecture review, which also reviews plans, ignores the variable and has a fixed budget of
+3000 in its frontmatter, because nine sub-agents on a large pull request exceed 1000.
 
 ### Backend
 
