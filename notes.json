@@ -9,7 +9,7 @@
       "number": 4,
       "state": "commented",
       "updated_at": "2026-11-20",
-      "note": "#8 remains at 254006f after rejected merge publication; whole-tree validation still pending. No new issue activity requiring another response."
+      "note": "November 20 scan 44763388965 still reports only fast-xml-parser 5.11.1 -> 5.12.0. #8 head unchanged; no new response needed. Full scan against fix still pending."
     },
     {
       "number": 11,
@@ -36,57 +36,57 @@
       "follow_up": null
     },
     {
-      "area": "dependencies",
-      "checked_at": "2026-11-19",
-      "result": "Run 44558303293 scans ten manifests; only fast-xml-parser 5.11.1 -> 5.12.0 remains. Picomatch no longer reported. #8 already contains exact XML fix; clean install and npm ls pass.",
-      "follow_up": "Whole-tree scan against fix still required; default-branch failure is not a PR verdict."
+      "area": "docs",
+      "checked_at": "2026-11-20",
+      "result": "Committed 5d0fe43 on repo-assist/basics-kubernetes-otlp-metrics-20261120: replace nonexistent broker /metrics scrape with TLS OTLP Helm guidance. Docs build passes; same 23 baseline markdownlint findings.",
+      "follow_up": "Confirm draft publication; no duplicate resource-name fix already in #10."
     },
     {
-      "area": "build",
-      "checked_at": "2026-11-19",
-      "result": "just check/build/test pass after merging current default into #8. Full just verify stops compiling pinned scanner: anthropic-sdk-go compiler killed. No local security verdict; later full-gate tiers not reached.",
-      "follow_up": "Full verification remains outstanding in CI; scanner controls unchanged."
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-19",
-      "result": "All 117 Spec Kit/architecture Node tests and just test with race detection pass on merged #8 tree. git diff --check and staged whitespace checks pass. No test or production behavior changes beyond existing dependency fix.",
+      "area": "qa",
+      "checked_at": "2026-11-20",
+      "result": "Helm lint and telemetry ConfigMap render pass; documented values produce enabled metrics, 30s export, gRPC collector endpoint, insecure=false. No collector/cluster execution.",
       "follow_up": null
     },
     {
-      "area": "release",
-      "checked_at": "2026-11-19",
-      "result": "Current changes are workflow maintenance; this run maintains an existing docs dependency draft. No separate product-release PR warranted.",
+      "area": "build",
+      "checked_at": "2026-11-20",
+      "result": "just check, build, test pass. Full just verify stops at OSV querybatch TLS certificate validation (exit 127); later tiers not reached. Security controls unchanged.",
+      "follow_up": "Full gate still required in CI."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-20",
+      "result": "Fast Go/package tests with race detection pass, including existing OTLP signal-path export regression. Documentation-only change adds no production API or dependencies.",
       "follow_up": null
     },
     {
       "area": "ci",
       "checked_at": "2026-11-20",
-      "result": "Read all 146 #8 and 74 #10 checks plus separate empty statuses. #8 docs passes, Dependency review and CI gate fail unchanged; #10 docs and CI gate pass. Prior publishing job failed.",
-      "follow_up": "#11 documents workflow-file permission rejection; no retry or permission changes."
+      "result": "All 146 #8 and 74 #10 check runs plus separate empty statuses read. #8 docs passes; Dependency review/gate fail. #10 docs/gate pass. No new human feedback.",
+      "follow_up": "#8 maintainer reconciliation/settings handoff remains."
+    },
+    {
+      "area": "dependencies",
+      "checked_at": "2026-11-20",
+      "result": "Security run 44763388965 scans ten manifests, reports only XML parser 5.11.1 -> 5.12.0 already covered by #8. No new finding or duplicate dependency PR.",
+      "follow_up": "Whole-tree scan against fix still needed."
     },
     {
       "area": "repo_assist_prs",
       "checked_at": "2026-11-20",
-      "result": "#8 merge a1173ca did not publish: live head 254006f and conflicts remain. Incoming aw-dev workflow changes cross permission boundary despite lockfile-only final base diff. #10 remains clean draft at 1d2f574.",
-      "follow_up": "Maintainer must reconcile #8 through an already-authorized workflow before automated maintenance resumes."
-    },
-    {
-      "area": "qa",
-      "checked_at": "2026-11-20",
-      "result": "Helm lint and external PostgreSQL migration/operator template renders pass. Confirmed migration Job broker-agentic-identity-broker-migrate and operator cluster my-team-broker-agentic-identity-broker. No cluster or Docker execution.",
-      "follow_up": null
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-20",
-      "result": "Task 7 rechecked Kubernetes guide against helpers and rendered resources. Existing draft #10 covers the verified name mismatch; no duplicate change. No source edits or application builds/tests this run.",
-      "follow_up": null
+      "result": "#8 live head 254006f remains conflicted; #10 head 1d2f574 clean draft. No retry of rejected workflow-containing merge. One separate metrics-guide draft prepared.",
+      "follow_up": "Confirm new draft publication and keep existing maintainer handoff."
     },
     {
       "area": "hygiene",
       "checked_at": "2026-11-20",
-      "result": "Tasks 2/3: reviewed six issue threads and active fixes. #11 is new actionable publication failure; submitted diagnosis and bug label. #4/#5 already have #8/#6. Substantive investigation made generic sweep unnecessary.",
+      "result": "Tasks 3 -> 2/1: read all six open issue threads; all labelled, existing #4/#5 fixes active. Task 7 found verified OTLP guide defect; no generic sweep needed. Working tree clean after focused doc commit.",
+      "follow_up": null
+    },
+    {
+      "area": "release",
+      "checked_at": "2026-11-20",
+      "result": "Recent default-branch changes are workflow maintenance; this change corrects deployment docs. No separate product release PR warranted.",
       "follow_up": null
     }
   ],
@@ -101,6 +101,11 @@
       "task": 10,
       "item": "issue-4-rescan",
       "note": "Whole-tree scan against #8 still required after maintainer reconciliation. Prior compiler-killed scanner run is not a clean verdict; no suppression or downgrade."
+    },
+    {
+      "task": 7,
+      "item": "metrics-guide-publication",
+      "note": "Confirm draft publication for repo-assist/basics-kubernetes-otlp-metrics-20261120 at 5d0fe43; avoid duplicate metrics-guide change."
     }
   ]
 }
