@@ -169,9 +169,12 @@ own dimension instructions. The dimension instructions live in the agent
 definitions, not in the task.
 
 If a sub-agent fails or returns output without the required JSON block,
-dispatch it once more with the same task. If it fails again, record that
-dimension as `failed`, write "⚠️ Dimension not assessed" with the reason in
-its section of the review, and continue. A review with an unassessed
+dispatch it once more with the same task. Retry failed sub-agents one at a
+time: dispatch one, wait for its result, then dispatch the next. Concurrent
+sub-agents can exhaust the model provider's quota, and a concurrent retry
+fails the same way. If the retry fails too, record that dimension as
+`failed`, write "⚠️ Dimension not assessed" with the reason in its section of
+the review, and continue. A review with an unassessed
 dimension can still be published, but it can never recommend **APPROVE**.
 
 ## Step 3: Consolidate
@@ -285,7 +288,10 @@ on `context.pr`. Do not post the body directly or compute the state yourself.
 
 If the review cannot be produced, for example because the head SHA cannot be
 fetched or more than one dimension failed twice, do not publish a partial
-review. Call `report_incomplete` with the actual blocker.
+review. Call `report_incomplete` with the actual blocker. Decide only after
+every retry has returned, and call either `add_comment` or `report_incomplete`,
+never both. A `report_incomplete` call cannot be withdrawn: it fails the run
+even when a review is published later.
 
 ## Output Format
 
