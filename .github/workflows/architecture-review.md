@@ -177,6 +177,12 @@ fails the same way. If the retry fails too, record that dimension as
 the review, and continue. A review with an unassessed
 dimension can still be published, but it can never recommend **APPROVE**.
 
+The session ends after `$GH_AW_TIMEOUT_MINUTES` minutes, or 90 minutes when
+that variable is unset, and nothing is published after that. Note `date -u`
+when you start and check it before each retry. Once 70 percent of that time
+has passed, dispatch no further retry: record every dimension still without a
+result as `failed`, then consolidate and publish or report as Step 4 requires.
+
 ## Step 3: Consolidate
 
 Read every sub-agent's section and JSON result. Then:
