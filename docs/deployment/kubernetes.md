@@ -379,12 +379,32 @@ kubectl logs job/broker-migrate
 
 ### Metrics
 
-Metrics endpoint (if enabled):
+The broker pushes metrics to an OpenTelemetry collector over OTLP; it does not
+serve a Prometheus `/metrics` endpoint. Port 14000 serves the admin API, not a
+metrics scrape endpoint.
 
-```bash
-kubectl port-forward svc/broker-agentic-identity-broker 14000:14000
-curl http://localhost:14000/metrics
+Enable telemetry in your Helm values and configure a collector endpoint:
+
+```yaml
+broker:
+  telemetry:
+    enabled: true
+    metrics:
+      enabled: true
+      exportInterval: 30s
+    exporter:
+      protocol: grpc
+      endpoint: otel-collector.monitoring.svc:4317
+      insecure: false
 ```
+
+Replace the example endpoint with your collector's address. The collector must
+accept OTLP/gRPC with a TLS certificate trusted by the broker. Traces and logs
+also use this endpoint when enabled. For Prometheus, configure collection through
+your collector rather than scraping the broker.
+
+See the [OpenTelemetry configuration reference](../configuration.md#observability--opentelemetry)
+for HTTP/HTTPS export, signal switches, and exporter settings.
 
 ## Security Best Practices
 
