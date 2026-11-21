@@ -30,40 +30,10 @@
   ],
   "checks": [
     {
-      "area": "code",
-      "checked_at": "2026-11-17",
-      "result": "Task 5 inspected scripts/verify-go-binary.sh: checks trimpath, DWARF presence/absence and trimmed source locations. No verified low-risk code defect; bash syntax check passes.",
-      "follow_up": null
-    },
-    {
-      "area": "docs",
-      "checked_at": "2026-11-20",
-      "result": "Committed 5d0fe43 on repo-assist/basics-kubernetes-otlp-metrics-20261120: replace nonexistent broker /metrics scrape with TLS OTLP Helm guidance. Docs build passes; same 23 baseline markdownlint findings.",
-      "follow_up": "Confirm draft publication; no duplicate resource-name fix already in #10."
-    },
-    {
       "area": "qa",
       "checked_at": "2026-11-20",
       "result": "Helm lint and telemetry ConfigMap render pass; documented values produce enabled metrics, 30s export, gRPC collector endpoint, insecure=false. No collector/cluster execution.",
       "follow_up": null
-    },
-    {
-      "area": "build",
-      "checked_at": "2026-11-20",
-      "result": "just check, build, test pass. Full just verify stops at OSV querybatch TLS certificate validation (exit 127); later tiers not reached. Security controls unchanged.",
-      "follow_up": "Full gate still required in CI."
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-20",
-      "result": "Fast Go/package tests with race detection pass, including existing OTLP signal-path export regression. Documentation-only change adds no production API or dependencies.",
-      "follow_up": null
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-20",
-      "result": "All 146 #8 and 74 #10 check runs plus separate empty statuses read. #8 docs passes; Dependency review/gate fail. #10 docs/gate pass. No new human feedback.",
-      "follow_up": "#8 maintainer reconciliation/settings handoff remains."
     },
     {
       "area": "dependencies",
@@ -72,21 +42,51 @@
       "follow_up": "Whole-tree scan against fix still needed."
     },
     {
+      "area": "code",
+      "checked_at": "2026-11-21",
+      "result": "Task 5 inspected binary verifier: trimpath and stripped/debug checks already present; bash syntax passes. No useful production change. Task 9 fallback adds Helm telemetry rendering coverage only.",
+      "follow_up": null
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-21",
+      "result": "Committed fb39024: seven Helm renders cover disabled master toggle, TLS-default gRPC/HTTPS, literal attribute/header keys, zero sampling, independent signal toggles and custom metric interval. Focused tests, fast race suite and self-contained integration suites pass.",
+      "follow_up": "Confirm publication of repo-assist/test-helm-telemetry-20261121 draft; avoid duplicate test change."
+    },
+    {
+      "area": "build",
+      "checked_at": "2026-11-21",
+      "result": "just check, build, test, test-integration and helm-lint pass. Initial cold build timed out, rerun succeeded. Full just verify stops at OSV querybatch certificate validation, exit 127; later tiers not reached.",
+      "follow_up": "Complete full verification in CI; no clean vulnerability verdict."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-21",
+      "result": "Read all 146/74/74 check runs and separate empty statuses for #8/#10/#12. #8 docs passes, Dependency review/gate fail; #10/#12 docs and gates pass. No new human feedback.",
+      "follow_up": "Existing #8 maintainer settings and reconciliation handoff unchanged."
+    },
+    {
       "area": "repo_assist_prs",
-      "checked_at": "2026-11-20",
-      "result": "#8 live head 254006f remains conflicted; #10 head 1d2f574 clean draft. No retry of rejected workflow-containing merge. One separate metrics-guide draft prepared.",
-      "follow_up": "Confirm new draft publication and keep existing maintainer handoff."
+      "checked_at": "2026-11-21",
+      "result": "Confirmed live draft #12 at c5d6aef, clean; replaced stale metrics publication priority. #8 still conflicted at 254006f; #10 clean at 1d2f574. One test-only draft prepared within capacity.",
+      "follow_up": "Confirm new Helm telemetry test draft publication."
+    },
+    {
+      "area": "docs",
+      "checked_at": "2026-11-21",
+      "result": "Metrics guide published as draft #12; current docs build and gate pass. Monthly summary pending reference corrected to actual PR. No duplicate documentation change.",
+      "follow_up": null
     },
     {
       "area": "hygiene",
-      "checked_at": "2026-11-20",
-      "result": "Tasks 3 -> 2/1: read all six open issue threads; all labelled, existing #4/#5 fixes active. Task 7 found verified OTLP guide defect; no generic sweep needed. Working tree clean after focused doc commit.",
+      "checked_at": "2026-11-21",
+      "result": "Tasks 3 -> 2/1 read all six issue threads; all labelled, #4/#5 active fixes, #11 blocker unchanged. Task 5 -> 9 found test gap; no generic sweep needed. Test-only commit, clean working tree.",
       "follow_up": null
     },
     {
       "area": "release",
-      "checked_at": "2026-11-20",
-      "result": "Recent default-branch changes are workflow maintenance; this change corrects deployment docs. No separate product release PR warranted.",
+      "checked_at": "2026-11-21",
+      "result": "Default branch recent commits maintain workflows; this run adds integration tests only. No separate product-release PR justified.",
       "follow_up": null
     }
   ],
@@ -103,9 +103,9 @@
       "note": "Whole-tree scan against #8 still required after maintainer reconciliation. Prior compiler-killed scanner run is not a clean verdict; no suppression or downgrade."
     },
     {
-      "task": 7,
-      "item": "metrics-guide-publication",
-      "note": "Confirm draft publication for repo-assist/basics-kubernetes-otlp-metrics-20261120 at 5d0fe43; avoid duplicate metrics-guide change."
+      "task": 9,
+      "item": "helm-telemetry-tests-publication",
+      "note": "Confirm draft publication for repo-assist/test-helm-telemetry-20261121 at fb39024; do not duplicate coverage."
     }
   ]
 }
